@@ -145,6 +145,57 @@
     return 0.15+(t*t*(3-2*t))*0.85;
   }
 
+  /* ---------- 音（ジジジという放電音） ---------- */
+  // ノイズを帯域で削り、方形波のLFOで断続させる。
+  // 断続の速さと帯域の高さを強度で動かすと「ジッ…ジッ」から「ジジジジ」まで連続的に変わる。
+  var A=null, silentAt=0;
+  function audioInit(){
+    if(A){ if(A.ctx.state==='suspended') A.ctx.resume(); return; }
+    var AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC) return;
+    var ac=new AC();
+
+    var len=Math.floor(ac.sampleRate*2);
+    var buf=ac.createBuffer(1,len,ac.sampleRate), d=buf.getChannelData(0);
+    for(var i=0;i<len;i++) d[i]=Math.random()*2-1;
+    var noise=ac.createBufferSource(); noise.buffer=buf; noise.loop=true;
+
+    var bp=ac.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1000; bp.Q.value=1.5;
+
+    var am=ac.createGain(); am.gain.value=0.34;        // ここにLFOが加算される
+    var lfo=ac.createOscillator(); lfo.type='square'; lfo.frequency.value=30;
+    var lfoDepth=ac.createGain(); lfoDepth.gain.value=0.34;
+    lfo.connect(lfoDepth); lfoDepth.connect(am.gain);
+
+    var saw=ac.createOscillator(); saw.type='sawtooth'; saw.frequency.value=30;
+    var sawG=ac.createGain(); sawG.gain.value=0;
+
+    var lp=ac.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=7000;
+    var master=ac.createGain(); master.gain.value=0;
+
+    noise.connect(bp); bp.connect(am); am.connect(lp);
+    saw.connect(sawG); sawG.connect(lp);
+    lp.connect(master); master.connect(ac.destination);
+
+    noise.start(); lfo.start(); saw.start();
+    A={ctx:ac,bp:bp,lfo:lfo,saw:saw,sawG:sawG,master:master};
+    if(ac.state==='suspended') ac.resume();
+  }
+  // 見た目より下に床を作る。軽く触れただけでも小さく鳴る。
+  function audioLevel(s){ return 0.12*Math.min(1,s*3)+0.88*visCurve(s); }
+  function audioUpdate(s){
+    if(!A||A.ctx.state!=='running') return;
+    var t=A.ctx.currentTime, a=audioLevel(s);
+    var j=1+(Math.random()-0.5)*0.12;              // 揺らぎがないと電子音になる
+    var rate=(26+a*118)*j;
+    A.lfo.frequency.setTargetAtTime(rate,t,0.03);
+    A.saw.frequency.setTargetAtTime(rate*0.5,t,0.03);
+    A.bp.frequency.setTargetAtTime((900+a*2700)*j,t,0.03);
+    A.bp.Q.setTargetAtTime(1.2+a*5,t,0.05);
+    A.sawG.gain.setTargetAtTime(a*a*0.06,t,0.04);
+    A.master.gain.setTargetAtTime(a*0.34,t,0.03);
+  }
+
   /* ---------- 振動（Web PWM） ---------- */
   var vibTimer=null;
   function pulseSpec(s){
@@ -165,7 +216,8 @@
     if(vibTimer) return;
     vibFire(S.strength);
     vibTimer=setInterval(function(){
-      if(!S.active){ stopVib(); return; }
+      // 指を離しても、減衰が終わるまで追従させる
+      if(!S.active && S.strength<0.03){ stopVib(); return; }
       vibFire(S.strength);
     },170);
   }
@@ -316,11 +368,20 @@
   }
 
   function tick(now){
+    now=now||0;
     S.target=S.active?computeTarget():0;
     // 平滑化は最小限（微小な揺れが手触りの源）。離したときだけゆっくり落とす。
     S.strength+=(S.target-S.strength)*(S.active?0.35:0.055);
     if(!S.active&&S.strength<0.003) S.strength=0;
-    draw(now||0);
+
+    audioUpdate(S.strength);
+    // 無音が続いたら音声を止めて電池を節約する
+    if(S.strength<=0){
+      if(!silentAt) silentAt=now;
+      else if(A&&A.ctx.state==='running'&&now-silentAt>1600){ A.ctx.suspend(); }
+    } else silentAt=0;
+
+    draw(now);
     requestAnimationFrame(tick);
   }
 
@@ -329,6 +390,11 @@
     e.preventDefault();
     if(cv.setPointerCapture) cv.setPointerCapture(e.pointerId);
     S.active=true; readPointer(e);
+    // 一瞬のタップでも取りこぼさないよう、押した時点で立ち上げておく
+    var t0=computeTarget();
+    if(t0>S.strength) S.strength=t0*0.55;
+    silentAt=0;
+    audioInit();
     document.body.classList.add('live');
     hintEl.classList.add('gone');
     startVib();
@@ -336,10 +402,15 @@
   cv.addEventListener('pointermove',function(e){
     if(!S.active) return; e.preventDefault(); readPointer(e);
   });
-  function up(){ if(!S.active) return; S.active=false; stopVib(); }
+  function up(){ if(!S.active) return; S.active=false; }   // 振動と音は減衰に追従して止まる
   cv.addEventListener('pointerup',up);
   cv.addEventListener('pointercancel',up);
-  document.addEventListener('visibilitychange',function(){ if(document.hidden){ up(); } });
+  document.addEventListener('visibilitychange',function(){
+    if(document.hidden){
+      S.active=false; S.strength=0; stopVib();
+      if(A&&A.ctx.state==='running'){ A.master.gain.value=0; A.ctx.suspend(); }
+    }
+  });
 
   /* ---------- 起動 ---------- */
   measure();
