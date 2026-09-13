@@ -105,6 +105,18 @@
   </div>
 
   <div class="sec">
+    <span class="lbl">振幅の直接テスト（ネイティブ）</span>
+    <div class="row" id="ampRow">
+      <button class="prim" data-amp="32">32</button>
+      <button class="prim" data-amp="64">64</button>
+      <button class="prim" data-amp="128">128</button>
+      <button class="prim" data-amp="192">192</button>
+      <button class="prim" data-amp="255">255</button>
+    </div>
+    <p class="note">300ms の単発を、指定した振幅で鳴らします。<b>32 と 255 がはっきり違えば、振幅制御そのものは効いています。</b>違いが分からなければ、この端末では実質使えないということです。</p>
+  </div>
+
+  <div class="sec">
     <span class="lbl">触覚プリミティブ（ネイティブのみ）</span>
     <div class="row" id="primRow">
       <button class="prim" data-prim="CLICK">CLICK</button>
@@ -169,7 +181,7 @@
     if(!i||!i.primitives) return;
     Array.prototype.forEach.call(document.querySelectorAll('.prim'),function(b){
       var k=b.dataset.prim;
-      if(k==='ARC') return;
+      if(!k || k==='ARC') return;
       if(i.primitives[k]===false) b.disabled=true;
     });
   }
@@ -248,11 +260,19 @@
   }
 
   /* ---------- vibration: native amplitude ---------- */
-  var natTimer=null;
+  var natTimer=null, lastAmp=0;
+  function strengthToAmp(s){
+    // 振幅の下のほうはモーターがほぼ動かないので床を作る。
+    // 線形だと PWM(常にフルパワーのパルス)より明らかに弱く感じるため 0.7 乗で持ち上げる。
+    var a = 60 + Math.pow(Math.max(0,Math.min(1,s)), 0.7) * 195;
+    return Math.max(1, Math.min(255, Math.round(a)));
+  }
   function natFire(strength){
     if(!HL||!NAT.available) return;
-    var amp=Math.max(1,Math.min(255,Math.round(1+strength*254)));
-    HL.oneShot({ms:60,amplitude:amp}).catch(function(){});
+    lastAmp = strengthToAmp(strength);
+    // 発行のたびにモーターが止まって立ち上がり直す。
+    // 間隔(140ms)より長い効果(220ms)を重ねて、途切れないようにする。
+    HL.oneShot({ms:220,amplitude:lastAmp}).catch(function(){});
   }
 
   function startVib(){
@@ -261,7 +281,7 @@
     if(m==='pwm'){ pwmFire(S.strength); pwmTimer=setInterval(function(){
       if(!S.active){stopVib();return;} pwmFire(S.strength); },170); }
     else if(m==='native'){ natFire(S.strength); natTimer=setInterval(function(){
-      if(!S.active){stopVib();return;} natFire(S.strength); },50); }
+      if(!S.active){stopVib();return;} natFire(S.strength); },140); }
   }
   function stopVib(){
     if(pwmTimer){clearInterval(pwmTimer);pwmTimer=null;}
@@ -332,7 +352,7 @@
     if(!S.active&&S.strength<0.004) S.strength=0;
     draw();
     $('hudVal').textContent=Math.round(S.strength*100)+'%';
-    var vname=S.blind.on?'??':(S.vib==='off'?'OFF':(S.vib==='pwm'?'PWM':'NATIVE'));
+    var vname=S.blind.on?'??':(S.vib==='off'?'OFF':(S.vib==='pwm'?'PWM':'NATIVE amp '+lastAmp));
     $('hudSrc').innerHTML='source '+(S.blind.on?'—':S.src)+'<br>vib '+vname;
     requestAnimationFrame(tick);
   }
@@ -395,7 +415,14 @@
   $('guessNative').addEventListener('click',function(){guess('native');});
 
   /* ---------- primitives ---------- */
-  Array.prototype.forEach.call(document.querySelectorAll('.prim'),function(b){
+  Array.prototype.forEach.call(document.querySelectorAll('[data-amp]'),function(b){
+    b.addEventListener('click',function(){
+      if(!HL||!NAT.available) return;
+      HL.oneShot({ms:300,amplitude:+b.dataset.amp}).catch(function(){});
+    });
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll('[data-prim]'),function(b){
     b.addEventListener('click',function(){
       if(!HL) return;
       var k=b.dataset.prim;
