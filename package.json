@@ -5,6 +5,13 @@
   "description": "触覚FB検証プロトタイプ: PWM振動 vs ネイティブ振幅制御の体感比較",
   "scripts": {
     "prepare:android": "node scripts/prepare-android.mjs",
-    "apk": "node scripts/prepare-android.mjs && cap sync android && cd android && ./gradlew assembleDebug"
+    "apk": "node scripts/prepare-android.mjs && npx cap sync android && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.2",
+    "@capacitor/core": "8.5.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.2"
   }
 }
