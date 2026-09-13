@@ -251,14 +251,23 @@
   // パルス幅と間隔の両方を強度で動かす。
   // 弱いとき: 4ms を 130ms 間隔（まばらな粒） / 強いとき: 連続
   // 間隔も動かすのが効く。パルス幅だけだと最小がここまで軽くならない。
-  // 使う範囲を 25%〜95% に寄せる。それより下は最小のまま、それより上は最大のまま。
-  var VIB_LO=0.25, VIB_HI=0.95;
+  // 25%まで最小のまま、55%から一気に立ち上げ、95%で最大。
+  var VIB_FLOOR=0.25, VIB_KNEE=0.55, VIB_TOP=0.95;
+  function vibCurve(s){
+    s=Math.max(0,Math.min(1,s));
+    if(s<=VIB_FLOOR) return 0;
+    if(s<VIB_KNEE){
+      // ここはほぼ寝かせる（最小のまま少しだけ動く）
+      return ((s-VIB_FLOOR)/(VIB_KNEE-VIB_FLOOR))*0.12;
+    }
+    var t=Math.min(1,(s-VIB_KNEE)/(VIB_TOP-VIB_KNEE));
+    return 0.12+(t*t*(3-2*t))*0.88;   // 55%から急に立ち上がる
+  }
   function pulseSpec(s){
-    var t=(Math.max(0,Math.min(1,s))-VIB_LO)/(VIB_HI-VIB_LO);
-    t=Math.max(0,Math.min(1,t));
-    var on=Math.max(3,Math.round(4+Math.pow(t,1.2)*36));
-    var period=Math.round(130-t*90);
-    return {on:on, off:Math.max(0,period-on), t:t};
+    var u=vibCurve(s);
+    var on=Math.max(3,Math.round(4+u*36));
+    var period=Math.round(130-u*90);
+    return {on:on, off:Math.max(0,period-on), t:u};
   }
   function pwmPattern(s,total){
     var sp=pulseSpec(s);
@@ -278,8 +287,7 @@
   function strengthToAmp(s){
     // 振幅の下のほうはモーターがほぼ動かないので床を作る。
     // 線形だと PWM(常にフルパワーのパルス)より明らかに弱く感じるため 0.7 乗で持ち上げる。
-    var t=(Math.max(0,Math.min(1,s))-VIB_LO)/(VIB_HI-VIB_LO); t=Math.max(0,Math.min(1,t));
-    var a = 60 + Math.pow(t, 0.7) * 195;
+    var a = 60 + Math.pow(vibCurve(s), 0.7) * 195;
     return Math.max(1, Math.min(255, Math.round(a)));
   }
   function natFire(strength){
@@ -349,28 +357,27 @@
     ctx.stroke();
   }
 
-  // 電極の位置（正規化座標）。先頭が本体のコイルで常に生きている。
-  var SRC=[[0.50,1.00],[0.00,0.60],[1.00,0.60],[0.14,0.00],[0.86,0.00]];
-  function srcTip(i,W,H){
-    var d=SRC[i], m=16, x=d[0]*W, y=d[1]*H, dx=0, dy=0;
-    if(d[0]===0){ x=m; dx=1; } else if(d[0]===1){ x=W-m; dx=-1; }
-    if(d[1]===0){ y=m; dy=1; } else if(d[1]===1){ y=H-m; dy=-1; }
-    return {bx:x, by:y, tx:x+dx*16, ty:y+dy*16};
-  }
-
-  // 画面の縁のどこか1点
-  function edgePoint(W,H){
-    var t=Math.random()*2*(W+H);
-    if(t<W) return [t,0];
-    t-=W; if(t<H) return [W,t];
-    t-=H; if(t<W) return [W-t,H];
-    t-=W; return [0,H-t];
-  }
-
   var sparks=[], rings=[], lastRing=0;
 
+  function coilPos(W,H){ return {x:W/2, y:H-32}; }   // トロイド（頂部の輪）の中心
+
+  function drawCoil(ctx,c,W,H,s){
+    // 台座
+    ctx.strokeStyle='#3B5468'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(c.x-34,H-6); ctx.lineTo(c.x+34,H-6); ctx.stroke();
+    // 二次コイルの巻線
+    ctx.strokeStyle='#2F4558'; ctx.lineWidth=1.5;
+    ctx.beginPath();
+    for(var y=H-11;y>c.y+7;y-=4){ ctx.moveTo(c.x-9,y); ctx.lineTo(c.x+9,y); }
+    ctx.stroke();
+    // トロイド
+    ctx.strokeStyle='rgba(116,214,255,'+(0.35+s*0.55)+')';
+    ctx.lineWidth=3;
+    ctx.beginPath(); ctx.ellipse(c.x,c.y,22+s*4,7+s*2,0,0,6.2832); ctx.stroke();
+  }
+
   function draw(){
-    var W=S.cssW,H=S.cssH,s=S.strength,now=performance.now();
+    var W=S.cssW,H=S.cssH,s=S.strength,now=performance.now(),i;
 
     // 前のフレームを完全には消さない。残像がそのまま輝きになる。
     ctx.globalCompositeOperation='source-over';
@@ -384,69 +391,48 @@
     for(var gy=0;gy<=H;gy+=step){ ctx.moveTo(0,gy+0.5); ctx.lineTo(W,gy+0.5); }
     ctx.stroke();
 
-    // 強度が上がるほど参加する電極が増える
-    var active=1+Math.round(s*(SRC.length-1)), tips=[], i, e;
-    for(i=0;i<SRC.length;i++){
-      e=srcTip(i,W,H); tips.push(e);
-      var live=(i<active);
-      ctx.strokeStyle=live?'rgba(116,214,255,'+(0.3+s*0.5)+')':'#26364A';
-      ctx.lineWidth=2;
-      ctx.beginPath(); ctx.moveTo(e.bx,e.by); ctx.lineTo(e.tx,e.ty); ctx.stroke();
-    }
-    ctx.strokeStyle='#3B5468'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(tips[0].bx-30,tips[0].by); ctx.lineTo(tips[0].bx+30,tips[0].by); ctx.stroke();
+    var c=coilPos(W,H);
+    drawCoil(ctx,c,W,H,s);
 
     // ここから加算合成。重なったところが白熱する。
     ctx.globalCompositeOperation='lighter';
     ctx.lineCap='round'; ctx.lineJoin='round';
 
-    for(i=0;i<active;i++){
-      e=tips[i];
-      var g0=ctx.createRadialGradient(e.tx,e.ty,0,e.tx,e.ty,10+s*22);
-      g0.addColorStop(0,'rgba(200,240,255,'+(0.5+s*0.5)+')');
-      g0.addColorStop(1,'rgba(90,190,255,0)');
-      ctx.fillStyle=g0;
-      ctx.beginPath(); ctx.arc(e.tx,e.ty,10+s*22,0,6.2832); ctx.fill();
-    }
+    // トロイドのコロナ
+    var gc=ctx.createRadialGradient(c.x,c.y,0,c.x,c.y,16+s*46);
+    gc.addColorStop(0,'rgba(210,242,255,'+(0.45+s*0.5)+')');
+    gc.addColorStop(1,'rgba(90,190,255,0)');
+    ctx.fillStyle=gc;
+    ctx.beginPath(); ctx.arc(c.x,c.y,16+s*46,0,6.2832); ctx.fill();
 
     if(s>0.015){
-      var segs=[], b, ep;
-      var disp=16+s*90;
+      var segs=[], b;
+      var big=Math.max(W,H);
 
-      // 電極 → 指
-      var total=3+Math.round(s*9);
-      for(b=0;b<total;b++){
-        var e2=tips[b%active];
-        var jx=S.x+(Math.random()-0.5)*(8+s*34);
-        var jy=S.y+(Math.random()-0.5)*(8+s*34);
-        buildSeg(segs,e2.tx,e2.ty,jx,jy,disp,5,s>0.35?3:1);
+      // ① 指へ向かう本命のアーク
+      var main=1+Math.round(s*5);
+      for(b=0;b<main;b++){
+        var jx=S.x+(Math.random()-0.5)*(8+s*30);
+        var jy=S.y+(Math.random()-0.5)*(8+s*30);
+        buildSeg(segs,c.x,c.y,jx,jy,18+s*80,5,s>0.3?3:1);
       }
 
-      // 指 → 画面の縁。ここが「画面全体がコイルになる」部分。
-      if(s>0.45){
-        var edge=Math.round((s-0.45)*20);
-        for(b=0;b<edge&&segs.length<5200;b++){
-          ep=edgePoint(W,H);
-          buildSeg(segs,S.x,S.y,ep[0],ep[1],30+s*70,4,2);
-        }
+      // ② トロイドから四方へ伸びるストリーマ。強度が上がるほど本数も長さも増え、
+      //    最大では画面の外まで届く。「画面全体がコイル」になるのはここ。
+      var st=1+Math.round(s*s*26);
+      for(b=0;b<st&&segs.length<6000;b++){
+        var ang=-0.08-Math.random()*Math.PI*0.84;          // 上半分に振る
+        var len=(0.22+Math.random()*0.78)*(0.30+s*0.85)*big;
+        buildSeg(segs,c.x,c.y,c.x+Math.cos(ang)*len,c.y+Math.sin(ang)*len,
+                 22+s*70,4,s>0.5?2:1);
       }
 
-      // 電極どうしを横断する放電
-      if(s>0.6&&active>1){
-        var cross=Math.round((s-0.6)*12);
-        for(b=0;b<cross&&segs.length<5200;b++){
-          var i1=Math.floor(Math.random()*active), i2=Math.floor(Math.random()*active);
-          if(i1===i2) continue;
-          buildSeg(segs,tips[i1].tx,tips[i1].ty,tips[i2].tx,tips[i2].ty,40+s*90,4,1);
-        }
-      }
-
-      // 縁を這う放電（最大付近だけ）
-      if(s>0.8){
-        var crawl=Math.round((s-0.8)*14);
-        for(b=0;b<crawl&&segs.length<5200;b++){
-          var p1=edgePoint(W,H), p2=edgePoint(W,H);
-          buildSeg(segs,p1[0],p1[1],p2[0],p2[1],30+s*60,4,1);
+      // ③ 指先から散る短い枝
+      if(s>0.35){
+        var sp=Math.round((s-0.35)*14);
+        for(b=0;b<sp&&segs.length<6000;b++){
+          var a3=Math.random()*6.2832, l3=24+Math.random()*(36+s*90);
+          buildSeg(segs,S.x,S.y,S.x+Math.cos(a3)*l3,S.y+Math.sin(a3)*l3,18+s*30,4,1);
         }
       }
 
@@ -454,14 +440,12 @@
       strokeSegs(segs, 3+s*6,   'rgba(50,160,255,'+(0.22+s*0.32)+')');
       strokeSegs(segs, 1+s*2.0, 'rgba(225,248,255,'+(0.55+s*0.45)+')');
 
-      // 火花
       var want=Math.round(s*s*7);
       for(i=0;i<want&&sparks.length<150;i++){
         var a2=Math.random()*6.2832, v=1.6+Math.random()*(3+s*9);
         sparks.push({x:S.x,y:S.y,vx:Math.cos(a2)*v,vy:Math.sin(a2)*v,l:1});
       }
-      // 衝撃波
-      if(s>0.45&&now-lastRing>Math.max(80,340-s*280)){ rings.push({x:S.x,y:S.y,r:12,l:1}); lastRing=now; }
+      if(s>0.45&&now-lastRing>Math.max(80,340-s*280)){ rings.push({x:c.x,y:c.y,r:14,l:1}); lastRing=now; }
     }
 
     for(i=sparks.length-1;i>=0;i--){
@@ -473,14 +457,14 @@
     }
     for(i=rings.length-1;i>=0;i--){
       var r=rings[i];
-      r.r+=5+s*10; r.l-=0.045;
+      r.r+=6+s*14; r.l-=0.04;
       if(r.l<=0){ rings.splice(i,1); continue; }
       ctx.strokeStyle='rgba(110,200,255,'+(r.l*0.42)+')'; ctx.lineWidth=2;
       ctx.beginPath(); ctx.arc(r.x,r.y,r.r,0,6.2832); ctx.stroke();
     }
 
     if(s>0.02){
-      var rr=22+s*s*Math.max(W,H)*0.55;
+      var rr=20+s*s*Math.max(W,H)*0.45;
       var g=ctx.createRadialGradient(S.x,S.y,0,S.x,S.y,rr);
       g.addColorStop(0,'rgba(255,255,255,'+(0.45+s*0.5)+')');
       g.addColorStop(0.28,'rgba(140,220,255,'+(0.22+s*0.3)+')');
@@ -488,9 +472,7 @@
       ctx.fillStyle=g;
       ctx.beginPath(); ctx.arc(S.x,S.y,rr,0,6.2832); ctx.fill();
     }
-    // 全体が明るくなる
     if(s>0.3){ ctx.fillStyle='rgba(30,90,170,'+((s-0.3)*0.16)+')'; ctx.fillRect(0,0,W,H); }
-    // 最大付近でときどき画面全体が閃く
     if(s>0.82&&Math.random()<0.07){
       ctx.fillStyle='rgba(190,225,255,'+((s-0.82)*0.55)+')'; ctx.fillRect(0,0,W,H);
     }
@@ -509,7 +491,7 @@
     var vname=S.blind.on?'??':(S.vib==='off'?'OFF':
       (S.vib==='pwm'?('PWM '+sp.on+'/'+sp.off):
       (S.vib==='native'?('AMP '+lastAmp):('PULSE '+sp.on+'/'+sp.off+' a'+lastAmp))));
-    $('hudSrc').innerHTML='source '+(S.blind.on?'—':S.src)+'<br>vib '+vname+'<br>arc '+(1+Math.round(S.strength*4));
+    $('hudSrc').innerHTML='source '+(S.blind.on?'—':S.src)+'<br>vib '+vname+'<br>arc '+(1+Math.round(S.strength*5))+'+'+(1+Math.round(S.strength*S.strength*26));
     requestAnimationFrame(tick);
   }
 
