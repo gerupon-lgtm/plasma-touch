@@ -136,6 +136,42 @@ public class HapticLabPlugin extends Plugin {
         call.resolve();
     }
 
+    /** パルス列を native 側で正確に鳴らす。repeat=0 でキャンセルするまでループする。 */
+    @PluginMethod
+    public void waveform(PluginCall call) {
+        Vibrator v = vibrator();
+        if (v == null || !v.hasVibrator()) { call.reject("no vibrator"); return; }
+
+        JSArray t = call.getArray("timings");
+        JSArray a = call.getArray("amplitudes");
+        if (t == null || a == null || t.length() == 0 || t.length() != a.length()) {
+            call.reject("timings and amplitudes must be same-length non-empty arrays");
+            return;
+        }
+
+        long[] timings = new long[t.length()];
+        int[] amps = new int[a.length()];
+        try {
+            for (int i = 0; i < t.length(); i++) {
+                timings[i] = Math.max(0, t.getInt(i));
+                amps[i] = Math.max(0, Math.min(255, a.getInt(i)));
+            }
+        } catch (JSONException e) {
+            call.reject("bad arrays: " + e.getMessage());
+            return;
+        }
+
+        int repeat = call.getInt("repeat", -1);
+        if (repeat < -1 || repeat >= timings.length) repeat = -1;
+
+        if (v.hasAmplitudeControl()) {
+            v.vibrate(VibrationEffect.createWaveform(timings, amps, repeat));
+        } else {
+            v.vibrate(VibrationEffect.createWaveform(timings, repeat));
+        }
+        call.resolve();
+    }
+
     @PluginMethod
     public void cancel(PluginCall call) {
         Vibrator v = vibrator();

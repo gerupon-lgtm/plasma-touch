@@ -42,7 +42,7 @@
   .lbl{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint)}
   .row{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
   .seg{display:flex;gap:0;border:1px solid var(--line-hi);width:100%}
-  .seg button{flex:1;border:none;border-right:1px solid var(--line-hi);border-radius:0}
+  .seg button{flex:1;border:none;border-right:1px solid var(--line-hi);border-radius:0;padding:11px 6px;font-size:12.5px}
   .seg button:last-child{border-right:none}
   button{
     font-family:var(--sans);font-size:13px;font-weight:600;color:var(--ink);
@@ -86,10 +86,11 @@
     <span class="lbl">振動方式</span>
     <div class="seg" id="modeSeg">
       <button data-vib="off" aria-pressed="false">OFF</button>
-      <button data-vib="pwm" aria-pressed="true">Web PWM</button>
-      <button data-vib="native" aria-pressed="false">ネイティブ振幅</button>
+      <button data-vib="pwm" aria-pressed="true">PWM</button>
+      <button data-vib="native" aria-pressed="false">振幅</button>
+      <button data-vib="npulse" aria-pressed="false">パルス</button>
     </div>
-    <p class="note">同じ絵・同じ入力で、振動の出し方だけを切り替えます。押しながら切り替えて比べられます。</p>
+    <p class="note"><b>PWM</b> = Web。フルパワーの短いパルスを間隔で強弱。<b>振幅</b> = ネイティブの連続振動を振幅で強弱。<b>パルス</b> = PWM と同じ刻みを、ネイティブが振幅つき・時間精度つきで鳴らす。押しながら切り替えられます。</p>
   </div>
 
   <div class="sec">
@@ -173,6 +174,7 @@
   function setChip(t,c){ var el=$('natChip'); el.textContent=t; el.className='chip '+c; }
   function disableNative(){
     document.querySelector('[data-vib="native"]').disabled=true;
+    document.querySelector('[data-vib="npulse"]').disabled=true;
     Array.prototype.forEach.call(document.querySelectorAll('.prim'),function(b){b.disabled=true;});
     $('blindStart').disabled=true;
     $('blindState').textContent='ネイティブ振動が使えないため、ブラインド比較はできません。';
@@ -246,17 +248,26 @@
 
   /* ---------- vibration: web PWM ---------- */
   var pwmTimer=null;
-  function pwmPattern(duty,total){
-    var PERIOD=40, on=Math.max(5,Math.round(duty*PERIOD)), off=Math.max(0,PERIOD-on);
-    if(off===0) return [Math.min(total,400)];
+  // パルス幅と間隔の両方を強度で動かす。
+  // 弱いとき: 4ms を 130ms 間隔（まばらな粒） / 強いとき: 連続
+  // 間隔も動かすのが効く。パルス幅だけだと最小がここまで軽くならない。
+  function pulseSpec(s){
+    s=Math.max(0,Math.min(1,s));
+    var on=Math.max(3,Math.round(4+Math.pow(s,1.2)*36));
+    var period=Math.round(130-s*90);
+    return {on:on, off:Math.max(0,period-on)};
+  }
+  function pwmPattern(s,total){
+    var sp=pulseSpec(s);
+    if(sp.off===0) return [Math.min(total,400)];
     var p=[],acc=0;
-    while(acc<total){ p.push(on); p.push(off); acc+=on+off; }
+    while(acc<total && p.length<60){ p.push(sp.on); p.push(sp.off); acc+=sp.on+sp.off; }
     return p;
   }
-  function pwmFire(duty){
+  function pwmFire(s){
     if(!navigator.vibrate) return;
-    if(duty<=0.03){ try{navigator.vibrate(0);}catch(e){} return; }
-    try{ navigator.vibrate(pwmPattern(duty,200)); }catch(e){}
+    if(s<=0.01){ try{navigator.vibrate(0);}catch(e){} return; }
+    try{ navigator.vibrate(pwmPattern(s,260)); }catch(e){}
   }
 
   /* ---------- vibration: native amplitude ---------- */
@@ -275,6 +286,22 @@
     HL.oneShot({ms:220,amplitude:lastAmp}).catch(function(){});
   }
 
+  // PWM と同じ刻みを、native の waveform で鳴らす。
+  // repeat=0 でループさせるので、出し直しは「刻みか振幅が変わったとき」だけでよい。
+  var npTimer=null, lastSpecKey='';
+  function npulseFire(s){
+    if(!HL||!NAT.available) return;
+    var sp=pulseSpec(s), amp=strengthToAmp(s);
+    lastAmp=amp;
+    var key=sp.on+'/'+sp.off+'/'+(amp>>3);
+    if(key===lastSpecKey) return;
+    lastSpecKey=key;
+    var timings, amps;
+    if(sp.off===0){ timings=[240]; amps=[amp]; }
+    else { timings=[sp.on, sp.off]; amps=[amp, 0]; }
+    HL.waveform({timings:timings, amplitudes:amps, repeat:0}).catch(function(){});
+  }
+
   function startVib(){
     stopVib();
     var m=S.blind.on?S.blind.truth:S.vib;
@@ -282,10 +309,14 @@
       if(!S.active){stopVib();return;} pwmFire(S.strength); },170); }
     else if(m==='native'){ natFire(S.strength); natTimer=setInterval(function(){
       if(!S.active){stopVib();return;} natFire(S.strength); },140); }
+    else if(m==='npulse'){ lastSpecKey=''; npulseFire(S.strength); npTimer=setInterval(function(){
+      if(!S.active){stopVib();return;} npulseFire(S.strength); },60); }
   }
   function stopVib(){
     if(pwmTimer){clearInterval(pwmTimer);pwmTimer=null;}
     if(natTimer){clearInterval(natTimer);natTimer=null;}
+    if(npTimer){clearInterval(npTimer);npTimer=null;}
+    lastSpecKey='';
     try{ if(navigator.vibrate) navigator.vibrate(0); }catch(e){}
     if(HL) HL.cancel().catch(function(){});
   }
@@ -352,7 +383,10 @@
     if(!S.active&&S.strength<0.004) S.strength=0;
     draw();
     $('hudVal').textContent=Math.round(S.strength*100)+'%';
-    var vname=S.blind.on?'??':(S.vib==='off'?'OFF':(S.vib==='pwm'?'PWM':'NATIVE amp '+lastAmp));
+    var sp=pulseSpec(S.strength);
+    var vname=S.blind.on?'??':(S.vib==='off'?'OFF':
+      (S.vib==='pwm'?('PWM '+sp.on+'/'+sp.off):
+      (S.vib==='native'?('AMP '+lastAmp):('PULSE '+sp.on+'/'+sp.off+' a'+lastAmp))));
     $('hudSrc').innerHTML='source '+(S.blind.on?'—':S.src)+'<br>vib '+vname;
     requestAnimationFrame(tick);
   }
@@ -388,7 +422,7 @@
   /* ---------- blind A/B ---------- */
   $('blindStart').addEventListener('click',function(){
     S.blind.on=true;
-    S.blind.truth=Math.random()<0.5?'pwm':'native';
+    S.blind.truth=Math.random()<0.5?'pwm':'npulse';
     $('blindState').textContent='試行中 — パッドを押して、どちらか当ててください。';
     $('blindAnswer').hidden=false;
     $('blindStart').disabled=true;
@@ -399,7 +433,7 @@
     if(!S.blind.on) return;
     var right=(g===S.blind.truth);
     S.blind.trials++; if(right) S.blind.right++;
-    var truthName=S.blind.truth==='pwm'?'Web PWM':'ネイティブ振幅';
+    var truthName=S.blind.truth==='pwm'?'Web PWM':'ネイティブ パルス';
     $('blindState').textContent=(right?'○ 正解':'× 外れ')+' — 正体は '+truthName;
     S.blind.on=false; S.blind.truth=null;
     stopVib();
@@ -412,7 +446,7 @@
     buildReport();
   }
   $('guessPwm').addEventListener('click',function(){guess('pwm');});
-  $('guessNative').addEventListener('click',function(){guess('native');});
+  $('guessNative').addEventListener('click',function(){guess('npulse');});
 
   /* ---------- primitives ---------- */
   Array.prototype.forEach.call(document.querySelectorAll('[data-amp]'),function(b){
