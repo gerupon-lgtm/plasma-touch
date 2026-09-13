@@ -30,6 +30,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Generate android project
+        run: node scripts/prepare-android.mjs
+
       - run: npx cap sync android
 
       - run: chmod +x android/gradlew
