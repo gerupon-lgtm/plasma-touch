@@ -1,0 +1,17 @@
+{
+  "name": "プラズマタッチ検証ページ",
+  "short_name": "プラズマタッチ",
+  "description": "画面に触れるとテスラコイルから放電が走る、ヒーリング用のプラズマガジェット。",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "background_color": "#05080C",
+  "theme_color": "#05080C",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

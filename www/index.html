@@ -3,227 +3,108 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>プラズマタッチ 比較プロト</title>
+<meta name="theme-color" content="#05080C">
+<title>プラズマタッチ検証ページ</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="プラズマタッチ">
 <style>
-  :root{
-    --ground:#080C12; --panel:#111924; --panel-2:#0C131C;
-    --line:#21303F; --line-hi:#2F4558;
-    --ink:#D8E3EF; --ink-dim:#8699AD; --ink-faint:#5B6B7D;
-    --arc:#74D6FF; --arc-hot:#E8F8FF; --violet:#A87CFF;
-    --ok:#5BE08C; --warn:#FFC64D; --bad:#FF7A7A;
-    --sans:system-ui,-apple-system,"Noto Sans JP","Hiragino Sans",sans-serif;
-    --mono:ui-monospace,SFMono-Regular,Menlo,"Roboto Mono",monospace;
-  }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  html,body{height:100%;margin:0}
+  html,body{height:100%;margin:0;background:#05080C;overflow:hidden}
   body{
-    background:var(--ground);color:var(--ink);font-family:var(--sans);
     -webkit-touch-callout:none;-webkit-user-select:none;user-select:none;
-    overscroll-behavior:none;line-height:1.55;
+    overscroll-behavior:none;
+    font-family:system-ui,-apple-system,"Noto Sans JP","Hiragino Sans",sans-serif;
   }
-  #app{min-height:100dvh;display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
 
-  header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel-2)}
-  header h1{font-size:14px;font-weight:600;margin:0;letter-spacing:.01em;white-space:nowrap}
-  .chip{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;padding:3px 8px;border:1px solid currentColor;margin-left:auto;white-space:nowrap}
-  .c-ok{color:var(--ok)} .c-bad{color:var(--bad)} .c-idle{color:var(--ink-faint)}
-
-  #padwrap{position:relative;flex:0 0 auto;height:48dvh;min-height:260px;background:#05080C;border-bottom:1px solid var(--line)}
-  canvas{position:absolute;inset:0;display:block;width:100%;height:100%;touch-action:none}
-  #hud{position:absolute;top:10px;left:12px;right:12px;display:flex;align-items:center;gap:10px;pointer-events:none;font-family:var(--mono)}
-  #hudVal{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums;min-width:4.4em;text-shadow:0 0 12px rgba(0,0,0,.9)}
-  #hudSrc{font-size:10.5px;color:var(--ink-faint);letter-spacing:.06em;text-align:right;margin-left:auto;line-height:1.4}
-  #tip{position:absolute;left:0;right:0;bottom:12px;text-align:center;font-family:var(--mono);font-size:11px;
-       color:var(--ink-faint);pointer-events:none;transition:opacity .3s;letter-spacing:.04em;padding:0 14px}
-  #tip.gone{opacity:0}
-
-  .sec{padding:12px 14px;display:flex;flex-direction:column;gap:10px;border-bottom:1px solid var(--line)}
-  .sec:last-child{border-bottom:none}
-  .lbl{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint)}
-  .row{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
-  .seg{display:flex;gap:0;border:1px solid var(--line-hi);width:100%}
-  .seg button{flex:1;border:none;border-right:1px solid var(--line-hi);border-radius:0;padding:11px 6px;font-size:12.5px}
-  .seg button:last-child{border-right:none}
-  button{
-    font-family:var(--sans);font-size:13px;font-weight:600;color:var(--ink);
-    background:#17212D;border:1px solid var(--line-hi);padding:11px 13px;cursor:pointer;
-    transition:background .12s,color .12s;letter-spacing:.02em;
+  /* 画面に溶け込ませる */
+  #brand{
+    position:fixed;left:0;right:0;
+    top:calc(env(safe-area-inset-top) + 16px);
+    text-align:center;pointer-events:none;
+    font-size:10.5px;letter-spacing:.42em;text-indent:.42em;
+    color:rgba(150,200,230,.20);
+    transition:color 1.2s ease;
   }
-  button:active{background:#0E1620}
-  button:focus-visible{outline:2px solid var(--arc);outline-offset:2px}
-  button[aria-pressed="true"]{background:rgba(116,214,255,.16);color:var(--arc-hot)}
-  button:disabled{opacity:.38;cursor:default}
-  button.prim{font-family:var(--mono);font-size:11.5px;padding:9px 10px;flex:1 1 auto;min-width:72px}
-  button.wide{width:100%}
-  button.go{border-color:var(--violet);color:#DCC9FF}
+  body.live #brand{color:rgba(150,200,230,.09)}
 
-  p.note{margin:0;font-size:12px;color:var(--ink-dim)}
-  p.note b{color:var(--ink)}
-  #blindState{font-family:var(--mono);font-size:12px;color:var(--arc);min-height:1.5em}
-  #blindTally{font-family:var(--mono);font-size:12px;color:var(--ink-dim);font-variant-numeric:tabular-nums}
-  pre{margin:0;font-family:var(--mono);font-size:10.5px;line-height:1.55;color:var(--ink-dim);
-      background:#05080C;border:1px solid var(--line);padding:10px;overflow:auto;max-height:170px;
-      -webkit-user-select:text;user-select:text}
+  #hint{
+    position:fixed;left:0;right:0;
+    bottom:calc(env(safe-area-inset-bottom) + 22px);
+    text-align:center;pointer-events:none;
+    font-size:11.5px;letter-spacing:.22em;text-indent:.22em;
+    color:rgba(150,200,230,.26);
+    transition:opacity 1.4s ease;
+  }
+  #hint.gone{opacity:0}
+
+  /* セーフエリアの実寸を測るためだけの要素 */
+  #safe{
+    position:fixed;left:0;bottom:0;width:1px;height:1px;
+    padding-bottom:env(safe-area-inset-bottom);
+    visibility:hidden;pointer-events:none;
+  }
+  @media (prefers-reduced-motion:reduce){#brand,#hint{transition:none}}
 </style>
 </head>
 <body>
-<div id="app">
-  <header>
-    <h1>プラズマタッチ 比較プロト</h1>
-    <span class="chip c-idle" id="natChip">ネイティブ確認中</span>
-  </header>
-
-  <div id="padwrap">
-    <canvas id="pad"></canvas>
-    <div id="hud">
-      <span id="hudVal">0%</span>
-      <span id="hudSrc">source —<br>vib —</span>
-    </div>
-    <div id="tip">パッドを押してください — 軽く触る → 強く押し込む</div>
-  </div>
-
-  <div class="sec">
-    <span class="lbl">振動方式</span>
-    <div class="seg" id="modeSeg">
-      <button data-vib="off" aria-pressed="false">OFF</button>
-      <button data-vib="pwm" aria-pressed="true">PWM</button>
-      <button data-vib="native" aria-pressed="false">振幅</button>
-      <button data-vib="npulse" aria-pressed="false">パルス</button>
-    </div>
-    <p class="note"><b>PWM</b> = Web。フルパワーの短いパルスを間隔で強弱。<b>振幅</b> = ネイティブの連続振動を振幅で強弱。<b>パルス</b> = PWM と同じ刻みを、ネイティブが振幅つき・時間精度つきで鳴らす。押しながら切り替えられます。</p>
-  </div>
-
-  <div class="sec">
-    <span class="lbl">ブラインド比較</span>
-    <div id="blindState">どちらが鳴っているか隠して比べます。</div>
-    <button class="wide go" id="blindStart">ブラインド比較を開始</button>
-    <div class="row" id="blindAnswer" hidden>
-      <button id="guessPwm" style="flex:1">PWM だと思う</button>
-      <button id="guessNative" style="flex:1">ネイティブだと思う</button>
-    </div>
-    <div id="blindTally">試行 0 ／ 正解 0</div>
-    <p class="note">当たらないなら<b>ネイティブ振幅に投資する意味は薄い</b>、という判断材料になります。5回やれば傾向が見えます。</p>
-  </div>
-
-  <div class="sec">
-    <span class="lbl">振幅の直接テスト（ネイティブ）</span>
-    <div class="row" id="ampRow">
-      <button class="prim" data-amp="32">32</button>
-      <button class="prim" data-amp="64">64</button>
-      <button class="prim" data-amp="128">128</button>
-      <button class="prim" data-amp="192">192</button>
-      <button class="prim" data-amp="255">255</button>
-    </div>
-    <p class="note">300ms の単発を、指定した振幅で鳴らします。<b>32 と 255 がはっきり違えば、振幅制御そのものは効いています。</b>違いが分からなければ、この端末では実質使えないということです。</p>
-  </div>
-
-  <div class="sec">
-    <span class="lbl">触覚プリミティブ（ネイティブのみ）</span>
-    <div class="row" id="primRow">
-      <button class="prim" data-prim="CLICK">CLICK</button>
-      <button class="prim" data-prim="TICK">TICK</button>
-      <button class="prim" data-prim="THUD">THUD</button>
-      <button class="prim" data-prim="SPIN">SPIN</button>
-      <button class="prim" data-prim="QUICK_RISE">QUICK_RISE</button>
-      <button class="prim" data-prim="QUICK_FALL">QUICK_FALL</button>
-      <button class="prim" data-prim="ARC">▶ 放電シーケンス</button>
-    </div>
-    <p class="note">PWM では原理的に作れない質感です。Web 版には存在しない引き出し。</p>
-  </div>
-
-  <div class="sec">
-    <span class="lbl">レポート</span>
-    <button class="wide" id="copyBtn">レポートをコピー</button>
-    <pre id="report">—</pre>
-  </div>
-</div>
+<canvas id="c"></canvas>
+<div id="brand">プラズマタッチ検証ページ</div>
+<div id="hint">画面に触れてください</div>
+<div id="safe"></div>
 
 <script>
 (function(){
   "use strict";
-  var $=function(id){return document.getElementById(id);};
+  var cv=document.getElementById('c'), ctx=cv.getContext('2d');
+  var brandEl=document.body, hintEl=document.getElementById('hint'), safeEl=document.getElementById('safe');
 
-  /* ---------- native bridge ---------- */
-  function nativePlugin(){
-    var C=window.Capacitor;
-    if(!C) return null;
-    if(C.Plugins && C.Plugins.HapticLab) return C.Plugins.HapticLab;
-    if(typeof C.registerPlugin==='function'){
-      try{ return C.registerPlugin('HapticLab'); }catch(e){ return null; }
-    }
-    return null;
-  }
-  var HL=nativePlugin();
-  var NAT={available:false, info:null};
-
-  function initNative(){
-    if(!HL){ setChip('ネイティブなし（Web）','c-bad'); disableNative(); buildReport(); return; }
-    HL.info().then(function(i){
-      NAT.info=i;
-      NAT.available=!!(i && i.hasVibrator);
-      if(i && i.hasAmplitudeControl) setChip('振幅制御 OK / '+i.model,'c-ok');
-      else if(NAT.available) setChip('振幅制御なし / '+i.model,'c-bad');
-      else setChip('振動なし','c-bad');
-      if(!NAT.available) disableNative();
-      applyPrimSupport(i);
-      buildReport();
-    }).catch(function(e){
-      setChip('ネイティブ呼び出し失敗','c-bad'); disableNative(); buildReport();
-    });
-  }
-  function setChip(t,c){ var el=$('natChip'); el.textContent=t; el.className='chip '+c; }
-  function disableNative(){
-    document.querySelector('[data-vib="native"]').disabled=true;
-    document.querySelector('[data-vib="npulse"]').disabled=true;
-    Array.prototype.forEach.call(document.querySelectorAll('.prim'),function(b){b.disabled=true;});
-    $('blindStart').disabled=true;
-    $('blindState').textContent='ネイティブ振動が使えないため、ブラインド比較はできません。';
-  }
-  function applyPrimSupport(i){
-    if(!i||!i.primitives) return;
-    Array.prototype.forEach.call(document.querySelectorAll('.prim'),function(b){
-      var k=b.dataset.prim;
-      if(!k || k==='ARC') return;
-      if(i.primitives[k]===false) b.disabled=true;
-    });
-  }
-
-  /* ---------- state ---------- */
   var S={
-    active:false, strength:0, target:0, vib:'pwm',
-    x:0,y:0, cssW:0, cssH:0,
+    active:false, strength:0, target:0,
+    x:0, y:0, W:0, H:0, safeB:0,
     area:NaN, pressure:NaN, w:NaN, h:NaN,
-    pMin:null, pMax:null, aMin:null, aMax:null,
-    src:'area',
-    blind:{on:false, truth:null, trials:0, right:0}
+    pMin:null, pMax:null, aMin:null, aMax:null, src:'area'
   };
 
-  /* ---------- canvas ---------- */
-  var pad=$('pad'), ctx=pad.getContext('2d');
+  /* ---------- サイズとコイルの配置（端末ごとに実測） ---------- */
   var DPR=Math.min(window.devicePixelRatio||1,2);
-  function sizePad(){
-    var box=$('padwrap').getBoundingClientRect();
-    var w=Math.max(120,Math.round(box.width));
-    var h=Math.max(120,Math.round(box.height));
-    if(w===S.cssW && h===S.cssH) return;   // 変化なしなら触らない（自己増殖の防止）
-    S.cssW=w; S.cssH=h;
-    pad.width=Math.round(w*DPR);
-    pad.height=Math.round(h*DPR);
+  var coil={};
+  function measure(){
+    var w=Math.round(window.innerWidth), h=Math.round(window.innerHeight);
+    if(w===S.W && h===S.H) return;
+    S.W=w; S.H=h;
+    cv.width=Math.round(w*DPR); cv.height=Math.round(h*DPR);
     ctx.setTransform(DPR,0,0,DPR,0,0);
-    if(!S.active){ S.x=w/2; S.y=h*0.38; }
-  }
-  window.addEventListener('resize',sizePad);
-  if(window.ResizeObserver){ new ResizeObserver(sizePad).observe($('padwrap')); }
 
-  /* ---------- strength ---------- */
+    S.safeB=parseFloat(getComputedStyle(safeEl).paddingBottom)||0;
+
+    // コイルの大きさは画面の短辺から決める。どの端末でも必ず画面内に収まる。
+    var u=Math.min(w,h);
+    coil.rx=Math.max(18,Math.min(48,u*0.085));
+    coil.ry=coil.rx*0.34;
+    coil.wind=Math.max(34,Math.min(90,u*0.115));   // 巻線の高さ
+    coil.baseY=h-S.safeB-14;                        // 台座
+    coil.y=coil.baseY-8-coil.wind;                  // トロイド中心（＝発生源）
+    coil.x=w/2;
+
+    if(!S.active){ S.x=w/2; S.y=h*0.34; }
+  }
+  window.addEventListener('resize',measure);
+  window.addEventListener('orientationchange',function(){ setTimeout(measure,250); });
+  if(window.visualViewport) window.visualViewport.addEventListener('resize',measure);
+
+  /* ---------- 強度 ---------- */
   function readPointer(e){
     if(typeof e.pressure==='number') S.pressure=e.pressure;
     if(typeof e.width==='number'&&e.width>0) S.w=e.width;
     if(typeof e.height==='number'&&e.height>0) S.h=e.height;
     if(S.w>0&&S.h>0) S.area=S.w*S.h;
-    var r=pad.getBoundingClientRect();
-    S.x=e.clientX-r.left; S.y=e.clientY-r.top;
-
+    S.x=e.clientX; S.y=e.clientY;
     if(isFinite(S.pressure)){
       if(S.pMin===null||S.pressure<S.pMin) S.pMin=S.pressure;
       if(S.pMax===null||S.pressure>S.pMax) S.pMax=S.pressure;
@@ -232,111 +113,68 @@
       if(S.aMin===null||S.area<S.aMin) S.aMin=S.area;
       if(S.aMax===null||S.area>S.aMax) S.aMax=S.area;
     }
-    // pressure が動くなら pressure を使う（正規化済みなのでキャリブレーション不要）
+    // pressure が動く端末ならそれを使う（0〜1 正規化済みで校正不要）
     S.src=(S.pMin!==null&&(S.pMax-S.pMin)>0.02)?'pressure':'area';
   }
+  function clamp01(v){ return !isFinite(v)?0:Math.max(0,Math.min(1,v)); }
   function computeTarget(){
-    if(S.src==='pressure') return clamp(S.pressure);
+    if(S.src==='pressure') return clamp01(S.pressure);
     if(S.aMin===null) return 0;
     var span=S.aMax-S.aMin;
-    if(span<1e-6) return 0.18;
+    if(span<1e-6) return 0.2;
     var lo=S.aMin, hi=S.aMax;
     if(span<lo*0.12) hi=lo+lo*0.12;
-    return clamp((S.area-lo)/(hi-lo));
+    return clamp01((S.area-lo)/(hi-lo));
   }
-  function clamp(v){ return !isFinite(v)?0:Math.max(0,Math.min(1,v)); }
 
-  /* ---------- vibration: web PWM ---------- */
-  var pwmTimer=null;
-  // パルス幅と間隔の両方を強度で動かす。
-  // 弱いとき: 4ms を 130ms 間隔（まばらな粒） / 強いとき: 連続
-  // 間隔も動かすのが効く。パルス幅だけだと最小がここまで軽くならない。
-  // 25%まで最小のまま、55%から一気に立ち上げ、95%で最大。
-  var VIB_FLOOR=0.25, VIB_KNEE=0.55, VIB_TOP=0.95;
+  /* ---------- カーブ ---------- */
+  // 振動: 25%まで最小、55%から一気に、95%で最大
   function vibCurve(s){
-    s=Math.max(0,Math.min(1,s));
-    if(s<=VIB_FLOOR) return 0;
-    if(s<VIB_KNEE){
-      // ここはほぼ寝かせる（最小のまま少しだけ動く）
-      return ((s-VIB_FLOOR)/(VIB_KNEE-VIB_FLOOR))*0.12;
-    }
-    var t=Math.min(1,(s-VIB_KNEE)/(VIB_TOP-VIB_KNEE));
-    return 0.12+(t*t*(3-2*t))*0.88;   // 55%から急に立ち上がる
+    s=clamp01(s);
+    if(s<=0.25) return 0;
+    if(s<0.55) return ((s-0.25)/0.30)*0.12;
+    var t=Math.min(1,(s-0.55)/0.40);
+    return 0.12+(t*t*(3-2*t))*0.88;
   }
+  // 見た目: 35%まで地味、55%から一気に、95%で最大
+  function visCurve(s){
+    s=clamp01(s);
+    if(s<=0.35) return 0;
+    if(s<0.55) return ((s-0.35)/0.20)*0.15;
+    var t=Math.min(1,(s-0.55)/0.40);
+    return 0.15+(t*t*(3-2*t))*0.85;
+  }
+
+  /* ---------- 振動（Web PWM） ---------- */
+  var vibTimer=null;
   function pulseSpec(s){
     var u=vibCurve(s);
     var on=Math.max(3,Math.round(4+u*36));
     var period=Math.round(130-u*90);
-    return {on:on, off:Math.max(0,period-on), t:u};
+    return {on:on, off:Math.max(0,period-on)};
   }
-  function pwmPattern(s,total){
-    var sp=pulseSpec(s);
-    if(sp.off===0) return [Math.min(total,400)];
-    var p=[],acc=0;
-    while(acc<total && p.length<60){ p.push(sp.on); p.push(sp.off); acc+=sp.on+sp.off; }
-    return p;
-  }
-  function pwmFire(s){
+  function vibFire(s){
     if(!navigator.vibrate) return;
     if(s<=0.005){ try{navigator.vibrate(0);}catch(e){} return; }
-    try{ navigator.vibrate(pwmPattern(s,260)); }catch(e){}
+    var sp=pulseSpec(s), pat, acc=0;
+    if(sp.off===0){ pat=[260]; }
+    else { pat=[]; while(acc<260&&pat.length<60){ pat.push(sp.on); pat.push(sp.off); acc+=sp.on+sp.off; } }
+    try{ navigator.vibrate(pat); }catch(e){}
   }
-
-  /* ---------- vibration: native amplitude ---------- */
-  var natTimer=null, lastAmp=0;
-  function strengthToAmp(s){
-    // 振幅の下のほうはモーターがほぼ動かないので床を作る。
-    // 線形だと PWM(常にフルパワーのパルス)より明らかに弱く感じるため 0.7 乗で持ち上げる。
-    var a = 60 + Math.pow(vibCurve(s), 0.7) * 195;
-    return Math.max(1, Math.min(255, Math.round(a)));
-  }
-  function natFire(strength){
-    if(!HL||!NAT.available) return;
-    lastAmp = strengthToAmp(strength);
-    // 発行のたびにモーターが止まって立ち上がり直す。
-    // 間隔(140ms)より長い効果(220ms)を重ねて、途切れないようにする。
-    HL.oneShot({ms:220,amplitude:lastAmp}).catch(function(){});
-  }
-
-  // PWM と同じ刻みを、native の waveform で鳴らす。
-  // repeat=0 でループさせるので、出し直しは「刻みか振幅が変わったとき」だけでよい。
-  var npTimer=null, lastSpecKey='';
-  function npulseFire(s){
-    if(!HL||!NAT.available) return;
-    var sp=pulseSpec(s), amp=strengthToAmp(s);
-    lastAmp=amp;
-    var key=sp.on+'/'+sp.off+'/'+(amp>>3);
-    if(key===lastSpecKey) return;
-    lastSpecKey=key;
-    var timings, amps;
-    if(sp.off===0){ timings=[240]; amps=[amp]; }
-    else { timings=[sp.on, sp.off]; amps=[amp, 0]; }
-    HL.waveform({timings:timings, amplitudes:amps, repeat:0}).catch(function(){});
-  }
-
   function startVib(){
-    stopVib();
-    var m=S.blind.on?S.blind.truth:S.vib;
-    if(m==='pwm'){ pwmFire(S.strength); pwmTimer=setInterval(function(){
-      if(!S.active){stopVib();return;} pwmFire(S.strength); },170); }
-    else if(m==='native'){ natFire(S.strength); natTimer=setInterval(function(){
-      if(!S.active){stopVib();return;} natFire(S.strength); },140); }
-    else if(m==='npulse'){ lastSpecKey=''; npulseFire(S.strength); npTimer=setInterval(function(){
-      if(!S.active){stopVib();return;} npulseFire(S.strength); },60); }
+    if(vibTimer) return;
+    vibFire(S.strength);
+    vibTimer=setInterval(function(){
+      if(!S.active){ stopVib(); return; }
+      vibFire(S.strength);
+    },170);
   }
   function stopVib(){
-    if(pwmTimer){clearInterval(pwmTimer);pwmTimer=null;}
-    if(natTimer){clearInterval(natTimer);natTimer=null;}
-    if(npTimer){clearInterval(npTimer);npTimer=null;}
-    lastSpecKey='';
+    if(vibTimer){ clearInterval(vibTimer); vibTimer=null; }
     try{ if(navigator.vibrate) navigator.vibrate(0); }catch(e){}
-    if(HL) HL.cancel().catch(function(){});
   }
 
-  /* ---------- plasma ---------- */
-  /* ---------- plasma ---------- */
-  // 稲妻を「線分の配列」として組み立てる。
-  // 3回なぞって太さと色を変えるので、経路の生成は1本につき1回で済む。
+  /* ---------- 稲妻 ---------- */
   function buildSeg(out,x0,y0,x1,y1,disp,depth,branch){
     if(depth<=0){ out.push(x0,y0,x1,y1); return; }
     var mx=(x0+x1)/2+(Math.random()-0.5)*disp;
@@ -357,259 +195,162 @@
     ctx.stroke();
   }
 
-  var sparks=[], rings=[], lastRing=0;
+  var sparks=[], rings=[], bloom=0, lastBloom=0;
 
-  function coilPos(W,H){ return {x:W/2, y:H-32}; }   // トロイド（頂部の輪）の中心
-
-  function drawCoil(ctx,c,W,H,s){
-    // 台座
-    ctx.strokeStyle='#3B5468'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(c.x-34,H-6); ctx.lineTo(c.x+34,H-6); ctx.stroke();
-    // 二次コイルの巻線
-    ctx.strokeStyle='#2F4558'; ctx.lineWidth=1.5;
+  function drawCoil(v,breath){
+    var c=coil;
+    ctx.strokeStyle='#33485C'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(c.x-c.rx*1.5,c.baseY); ctx.lineTo(c.x+c.rx*1.5,c.baseY); ctx.stroke();
+    ctx.strokeStyle='#2A3B4E'; ctx.lineWidth=1.5;
     ctx.beginPath();
-    for(var y=H-11;y>c.y+7;y-=4){ ctx.moveTo(c.x-9,y); ctx.lineTo(c.x+9,y); }
+    for(var y=c.baseY-5;y>c.y+c.ry;y-=4.5){ ctx.moveTo(c.x-c.rx*0.42,y); ctx.lineTo(c.x+c.rx*0.42,y); }
     ctx.stroke();
-    // トロイド
-    ctx.strokeStyle='rgba(116,214,255,'+(0.35+s*0.55)+')';
+    ctx.strokeStyle='rgba(116,214,255,'+(0.26+breath*0.14+v*0.6)+')';
     ctx.lineWidth=3;
-    ctx.beginPath(); ctx.ellipse(c.x,c.y,22+s*4,7+s*2,0,0,6.2832); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(c.x,c.y,c.rx+v*4,c.ry+v*2,0,0,6.2832); ctx.stroke();
   }
 
-  function draw(){
-    var W=S.cssW,H=S.cssH,s=S.strength,now=performance.now(),i;
+  function draw(now){
+    var W=S.W,H=S.H,s=S.strength,c=coil;
+    var v=visCurve(s);                      // 派手さ
+    var q=S.active?(0.10+v*0.90):v;         // 触れている間は最低限の存在感を残す
+    var breath=0.5+0.5*Math.sin(now/2600);  // 待機中のゆっくりした呼吸
 
-    // 前のフレームを完全には消さない。残像がそのまま輝きになる。
     ctx.globalCompositeOperation='source-over';
-    ctx.fillStyle='rgba(5,8,12,'+(0.38-s*s*0.28)+')';
+    ctx.fillStyle='rgba(5,8,12,'+(0.40-v*v*0.30)+')';
     ctx.fillRect(0,0,W,H);
 
-    ctx.strokeStyle='rgba(47,69,88,0.22)'; ctx.lineWidth=1;
-    var step=Math.round(W/8);
-    ctx.beginPath();
-    for(var gx=0;gx<=W;gx+=step){ ctx.moveTo(gx+0.5,0); ctx.lineTo(gx+0.5,H); }
-    for(var gy=0;gy<=H;gy+=step){ ctx.moveTo(0,gy+0.5); ctx.lineTo(W,gy+0.5); }
-    ctx.stroke();
+    drawCoil(v,breath);
 
-    var c=coilPos(W,H);
-    drawCoil(ctx,c,W,H,s);
-
-    // ここから加算合成。重なったところが白熱する。
     ctx.globalCompositeOperation='lighter';
     ctx.lineCap='round'; ctx.lineJoin='round';
 
-    // トロイドのコロナ
-    var gc=ctx.createRadialGradient(c.x,c.y,0,c.x,c.y,16+s*46);
-    gc.addColorStop(0,'rgba(210,242,255,'+(0.45+s*0.5)+')');
-    gc.addColorStop(1,'rgba(90,190,255,0)');
+    // トロイドのコロナ（待機中も静かに息づく）
+    var cr=c.rx*(0.9+breath*0.18)+v*Math.min(W,H)*0.16;
+    var gc=ctx.createRadialGradient(c.x,c.y,0,c.x,c.y,cr);
+    gc.addColorStop(0,'rgba(200,238,255,'+(0.16+breath*0.06+v*0.6)+')');
+    gc.addColorStop(1,'rgba(80,180,255,0)');
     ctx.fillStyle=gc;
-    ctx.beginPath(); ctx.arc(c.x,c.y,16+s*46,0,6.2832); ctx.fill();
+    ctx.beginPath(); ctx.arc(c.x,c.y,cr,0,6.2832); ctx.fill();
 
-    if(s>0.015){
-      var segs=[], b;
-      var big=Math.max(W,H);
+    if(S.active||v>0.01){
+      var segs=[], b, big=Math.max(W,H);
+      var disp=14+v*84;
 
-      // ① 指へ向かう本命のアーク
-      var main=1+Math.round(s*5);
+      // ① 発生源 → 指。触れていれば必ず1本は出る（35%以下でも細く静かに）
+      var main=1+Math.round(v*5);
       for(b=0;b<main;b++){
-        var jx=S.x+(Math.random()-0.5)*(8+s*30);
-        var jy=S.y+(Math.random()-0.5)*(8+s*30);
-        buildSeg(segs,c.x,c.y,jx,jy,18+s*80,5,s>0.3?3:1);
+        var jx=S.x+(Math.random()-0.5)*(8+v*30);
+        var jy=S.y+(Math.random()-0.5)*(8+v*30);
+        buildSeg(segs,c.x,c.y,jx,jy,disp,5,v>0.25?3:1);
       }
-
-      // ② トロイドから四方へ伸びるストリーマ。強度が上がるほど本数も長さも増え、
-      //    最大では画面の外まで届く。「画面全体がコイル」になるのはここ。
-      var st=1+Math.round(s*s*26);
+      // ② トロイドから四方へ。最大で画面外まで届く。
+      var st=Math.round(v*v*28);
       for(b=0;b<st&&segs.length<6000;b++){
-        var ang=-0.08-Math.random()*Math.PI*0.84;          // 上半分に振る
-        var len=(0.22+Math.random()*0.78)*(0.30+s*0.85)*big;
-        buildSeg(segs,c.x,c.y,c.x+Math.cos(ang)*len,c.y+Math.sin(ang)*len,
-                 22+s*70,4,s>0.5?2:1);
+        var ang=-0.08-Math.random()*Math.PI*0.84;
+        var len=(0.22+Math.random()*0.78)*(0.32+v*0.90)*big;
+        buildSeg(segs,c.x,c.y,c.x+Math.cos(ang)*len,c.y+Math.sin(ang)*len,20+v*72,4,v>0.45?2:1);
       }
-
-      // ③ 指先から散る短い枝
-      if(s>0.35){
-        var sp=Math.round((s-0.35)*14);
-        for(b=0;b<sp&&segs.length<6000;b++){
-          var a3=Math.random()*6.2832, l3=24+Math.random()*(36+s*90);
-          buildSeg(segs,S.x,S.y,S.x+Math.cos(a3)*l3,S.y+Math.sin(a3)*l3,18+s*30,4,1);
+      // ③ 指先から散る枝
+      if(v>0.25){
+        var sp2=Math.round((v-0.25)*16);
+        for(b=0;b<sp2&&segs.length<6000;b++){
+          var a3=Math.random()*6.2832, l3=22+Math.random()*(36+v*100);
+          buildSeg(segs,S.x,S.y,S.x+Math.cos(a3)*l3,S.y+Math.sin(a3)*l3,16+v*32,4,1);
         }
       }
 
-      strokeSegs(segs, 8+s*18,  'rgba(80,30,170,'+(0.10+s*0.18)+')');
-      strokeSegs(segs, 3+s*6,   'rgba(50,160,255,'+(0.22+s*0.32)+')');
-      strokeSegs(segs, 1+s*2.0, 'rgba(225,248,255,'+(0.55+s*0.45)+')');
+      strokeSegs(segs, 5+v*20,   'rgba(80,30,170,'+(0.06+q*0.20)+')');
+      strokeSegs(segs, 2.2+v*6,  'rgba(50,160,255,'+(0.14+q*0.36)+')');
+      strokeSegs(segs, 0.9+v*2.0,'rgba(225,248,255,'+(0.34+q*0.62)+')');
 
-      var want=Math.round(s*s*7);
-      for(i=0;i<want&&sparks.length<150;i++){
-        var a2=Math.random()*6.2832, v=1.6+Math.random()*(3+s*9);
-        sparks.push({x:S.x,y:S.y,vx:Math.cos(a2)*v,vy:Math.sin(a2)*v,l:1});
+      var want=Math.round(v*v*7);
+      for(b=0;b<want&&sparks.length<150;b++){
+        var a2=Math.random()*6.2832, vv=1.6+Math.random()*(3+v*9);
+        sparks.push({x:S.x,y:S.y,vx:Math.cos(a2)*vv,vy:Math.sin(a2)*vv,l:1});
       }
-      if(s>0.45&&now-lastRing>Math.max(80,340-s*280)){ rings.push({x:c.x,y:c.y,r:14,l:1}); lastRing=now; }
+      if(v>0.35&&now-lastBloom>Math.max(220,700-v*420)){
+        rings.push({x:c.x,y:c.y,r:c.rx,l:1});
+        if(v>0.6){ bloom=Math.min(1,bloom+0.55); }
+        lastBloom=now;
+      }
     }
 
+    var i;
     for(i=sparks.length-1;i>=0;i--){
-      var q=sparks[i];
-      q.x+=q.vx; q.y+=q.vy; q.vy+=0.13; q.vx*=0.984; q.vy*=0.984; q.l-=0.032;
-      if(q.l<=0){ sparks.splice(i,1); continue; }
-      ctx.strokeStyle='rgba(200,240,255,'+q.l+')'; ctx.lineWidth=1.4;
-      ctx.beginPath(); ctx.moveTo(q.x,q.y); ctx.lineTo(q.x-q.vx*2.2,q.y-q.vy*2.2); ctx.stroke();
+      var p=sparks[i];
+      p.x+=p.vx; p.y+=p.vy; p.vy+=0.13; p.vx*=0.984; p.vy*=0.984; p.l-=0.030;
+      if(p.l<=0){ sparks.splice(i,1); continue; }
+      ctx.strokeStyle='rgba(200,240,255,'+p.l+')'; ctx.lineWidth=1.4;
+      ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x-p.vx*2.2,p.y-p.vy*2.2); ctx.stroke();
     }
     for(i=rings.length-1;i>=0;i--){
       var r=rings[i];
-      r.r+=6+s*14; r.l-=0.04;
+      r.r+=5+v*14; r.l-=0.032;
       if(r.l<=0){ rings.splice(i,1); continue; }
-      ctx.strokeStyle='rgba(110,200,255,'+(r.l*0.42)+')'; ctx.lineWidth=2;
+      ctx.strokeStyle='rgba(110,200,255,'+(r.l*0.34)+')'; ctx.lineWidth=2;
       ctx.beginPath(); ctx.arc(r.x,r.y,r.r,0,6.2832); ctx.stroke();
     }
 
-    if(s>0.02){
-      var rr=20+s*s*Math.max(W,H)*0.45;
+    // 指先の光
+    if(S.active||v>0.02){
+      var rr=16+v*v*Math.max(W,H)*0.46;
       var g=ctx.createRadialGradient(S.x,S.y,0,S.x,S.y,rr);
-      g.addColorStop(0,'rgba(255,255,255,'+(0.45+s*0.5)+')');
-      g.addColorStop(0.28,'rgba(140,220,255,'+(0.22+s*0.3)+')');
+      g.addColorStop(0,'rgba(255,255,255,'+(0.30+q*0.60)+')');
+      g.addColorStop(0.28,'rgba(140,220,255,'+(0.14+q*0.34)+')');
       g.addColorStop(1,'rgba(90,140,255,0)');
       ctx.fillStyle=g;
       ctx.beginPath(); ctx.arc(S.x,S.y,rr,0,6.2832); ctx.fill();
     }
-    if(s>0.3){ ctx.fillStyle='rgba(30,90,170,'+((s-0.3)*0.16)+')'; ctx.fillRect(0,0,W,H); }
-    if(s>0.82&&Math.random()<0.07){
-      ctx.fillStyle='rgba(190,225,255,'+((s-0.82)*0.55)+')'; ctx.fillRect(0,0,W,H);
-    }
+
+    if(v>0.25){ ctx.fillStyle='rgba(30,90,170,'+((v-0.25)*0.20)+')'; ctx.fillRect(0,0,W,H); }
+
+    // 放電の閃き。点滅ではなく、膨らんで引く発光にする。
+    if(bloom>0.002){
+      ctx.fillStyle='rgba(185,222,255,'+(bloom*bloom*0.20)+')';
+      ctx.fillRect(0,0,W,H);
+      bloom*=0.90;
+    } else bloom=0;
 
     ctx.globalCompositeOperation='source-over';
   }
 
-  function tick(){
+  function tick(now){
     S.target=S.active?computeTarget():0;
-    // 平滑化は最小限（微小変動が体感の源なので消さない）
-    S.strength+=(S.target-S.strength)*(S.active?0.35:0.12);
-    if(!S.active&&S.strength<0.004) S.strength=0;
-    draw();
-    $('hudVal').textContent=Math.round(S.strength*100)+'%';
-    var sp=pulseSpec(S.strength);
-    var vname=S.blind.on?'??':(S.vib==='off'?'OFF':
-      (S.vib==='pwm'?('PWM '+sp.on+'/'+sp.off):
-      (S.vib==='native'?('AMP '+lastAmp):('PULSE '+sp.on+'/'+sp.off+' a'+lastAmp))));
-    $('hudSrc').innerHTML='source '+(S.blind.on?'—':S.src)+'<br>vib '+vname+'<br>arc '+(1+Math.round(S.strength*5))+'+'+(1+Math.round(S.strength*S.strength*26));
+    // 平滑化は最小限（微小な揺れが手触りの源）。離したときだけゆっくり落とす。
+    S.strength+=(S.target-S.strength)*(S.active?0.35:0.055);
+    if(!S.active&&S.strength<0.003) S.strength=0;
+    draw(now||0);
     requestAnimationFrame(tick);
   }
 
-  /* ---------- pointer ---------- */
-  pad.addEventListener('pointerdown',function(e){
+  /* ---------- 入力 ---------- */
+  cv.addEventListener('pointerdown',function(e){
     e.preventDefault();
-    if(pad.setPointerCapture) pad.setPointerCapture(e.pointerId);
+    if(cv.setPointerCapture) cv.setPointerCapture(e.pointerId);
     S.active=true; readPointer(e);
-    $('tip').classList.add('gone');
-    if(S.vib!=='off'||S.blind.on) startVib();
+    document.body.classList.add('live');
+    hintEl.classList.add('gone');
+    startVib();
   });
-  pad.addEventListener('pointermove',function(e){
+  cv.addEventListener('pointermove',function(e){
     if(!S.active) return; e.preventDefault(); readPointer(e);
   });
   function up(){ if(!S.active) return; S.active=false; stopVib(); }
-  pad.addEventListener('pointerup',up);
-  pad.addEventListener('pointercancel',up);
+  cv.addEventListener('pointerup',up);
+  cv.addEventListener('pointercancel',up);
+  document.addEventListener('visibilitychange',function(){ if(document.hidden){ up(); } });
 
-  /* ---------- mode seg ---------- */
-  Array.prototype.forEach.call(document.querySelectorAll('[data-vib]'),function(b){
-    b.addEventListener('click',function(){
-      if(S.blind.on) return;
-      S.vib=b.dataset.vib;
-      Array.prototype.forEach.call(document.querySelectorAll('[data-vib]'),function(o){
-        o.setAttribute('aria-pressed', o===b?'true':'false');
-      });
-      if(S.vib==='off') stopVib();
-      else if(S.active) startVib();
-    });
-  });
-
-  /* ---------- blind A/B ---------- */
-  $('blindStart').addEventListener('click',function(){
-    S.blind.on=true;
-    S.blind.truth=Math.random()<0.5?'pwm':'npulse';
-    $('blindState').textContent='試行中 — パッドを押して、どちらか当ててください。';
-    $('blindAnswer').hidden=false;
-    $('blindStart').disabled=true;
-    document.getElementById('modeSeg').style.opacity='.38';
-    if(S.active) startVib();
-  });
-  function guess(g){
-    if(!S.blind.on) return;
-    var right=(g===S.blind.truth);
-    S.blind.trials++; if(right) S.blind.right++;
-    var truthName=S.blind.truth==='pwm'?'Web PWM':'ネイティブ パルス';
-    $('blindState').textContent=(right?'○ 正解':'× 外れ')+' — 正体は '+truthName;
-    S.blind.on=false; S.blind.truth=null;
-    stopVib();
-    $('blindAnswer').hidden=true;
-    $('blindStart').disabled=false;
-    $('blindStart').textContent='次の試行';
-    document.getElementById('modeSeg').style.opacity='1';
-    var pct=Math.round(S.blind.right/S.blind.trials*100);
-    $('blindTally').textContent='試行 '+S.blind.trials+' ／ 正解 '+S.blind.right+'（'+pct+'%）';
-    buildReport();
-  }
-  $('guessPwm').addEventListener('click',function(){guess('pwm');});
-  $('guessNative').addEventListener('click',function(){guess('npulse');});
-
-  /* ---------- primitives ---------- */
-  Array.prototype.forEach.call(document.querySelectorAll('[data-amp]'),function(b){
-    b.addEventListener('click',function(){
-      if(!HL||!NAT.available) return;
-      HL.oneShot({ms:300,amplitude:+b.dataset.amp}).catch(function(){});
-    });
-  });
-
-  Array.prototype.forEach.call(document.querySelectorAll('[data-prim]'),function(b){
-    b.addEventListener('click',function(){
-      if(!HL) return;
-      var k=b.dataset.prim;
-      if(k==='ARC'){
-        // 蓄電 → 放電 → 余韻
-        HL.composition({primitives:[
-          {type:'SLOW_RISE',scale:0.7,delay:0},
-          {type:'QUICK_RISE',scale:1.0,delay:30},
-          {type:'CLICK',scale:1.0,delay:0},
-          {type:'QUICK_FALL',scale:0.8,delay:20},
-          {type:'LOW_TICK',scale:0.4,delay:60},
-          {type:'LOW_TICK',scale:0.25,delay:90}
-        ]}).catch(function(){});
-      } else {
-        HL.composition({primitives:[{type:k,scale:1.0,delay:0}]}).catch(function(){});
-      }
-    });
-  });
-
-  /* ---------- report ---------- */
-  function buildReport(){
-    var r={
-      測定日時:new Date().toISOString(),
-      ネイティブ:NAT.info||'（Web実行・プラグインなし）',
-      強度ソース:S.src,
-      観測値域:{
-        pressure:(S.pMin===null)?null:[+S.pMin.toFixed(4),+S.pMax.toFixed(4)],
-        面積px2:(S.aMin===null)?null:[+S.aMin.toFixed(1),+S.aMax.toFixed(1)]
-      },
-      ブラインド比較:{試行:S.blind.trials,正解:S.blind.right,
-        正答率:S.blind.trials?Math.round(S.blind.right/S.blind.trials*100)+'%':null},
-      userAgent:navigator.userAgent
-    };
-    $('report').textContent=JSON.stringify(r,null,2);
-  }
-  $('copyBtn').addEventListener('click',function(){
-    var btn=this, txt=$('report').textContent;
-    function done(m){ btn.textContent=m; setTimeout(function(){btn.textContent='レポートをコピー';},1800); }
-    if(navigator.clipboard&&navigator.clipboard.writeText){
-      navigator.clipboard.writeText(txt).then(function(){done('コピーしました');})
-        .catch(function(){done('下の枠を長押しして選択してください');});
-    } else { done('下の枠を長押しして選択してください'); }
-  });
-
-  /* ---------- boot ---------- */
-  sizePad();
-  initNative();
-  buildReport();
+  /* ---------- 起動 ---------- */
+  measure();
   requestAnimationFrame(tick);
+
+  // ホーム画面に追加できるようにする（埋め込み枠の中では登録しない）
+  if('serviceWorker' in navigator && window.top===window.self){
+    window.addEventListener('load',function(){
+      navigator.serviceWorker.register('sw.js').catch(function(){});
+    });
+  }
 })();
 </script>
 </body>
