@@ -251,11 +251,14 @@
   // パルス幅と間隔の両方を強度で動かす。
   // 弱いとき: 4ms を 130ms 間隔（まばらな粒） / 強いとき: 連続
   // 間隔も動かすのが効く。パルス幅だけだと最小がここまで軽くならない。
+  // 使う範囲を 25%〜95% に寄せる。それより下は最小のまま、それより上は最大のまま。
+  var VIB_LO=0.25, VIB_HI=0.95;
   function pulseSpec(s){
-    s=Math.max(0,Math.min(1,s));
-    var on=Math.max(3,Math.round(4+Math.pow(s,1.2)*36));
-    var period=Math.round(130-s*90);
-    return {on:on, off:Math.max(0,period-on)};
+    var t=(Math.max(0,Math.min(1,s))-VIB_LO)/(VIB_HI-VIB_LO);
+    t=Math.max(0,Math.min(1,t));
+    var on=Math.max(3,Math.round(4+Math.pow(t,1.2)*36));
+    var period=Math.round(130-t*90);
+    return {on:on, off:Math.max(0,period-on), t:t};
   }
   function pwmPattern(s,total){
     var sp=pulseSpec(s);
@@ -266,7 +269,7 @@
   }
   function pwmFire(s){
     if(!navigator.vibrate) return;
-    if(s<=0.01){ try{navigator.vibrate(0);}catch(e){} return; }
+    if(s<=0.005){ try{navigator.vibrate(0);}catch(e){} return; }
     try{ navigator.vibrate(pwmPattern(s,260)); }catch(e){}
   }
 
@@ -275,7 +278,8 @@
   function strengthToAmp(s){
     // 振幅の下のほうはモーターがほぼ動かないので床を作る。
     // 線形だと PWM(常にフルパワーのパルス)より明らかに弱く感じるため 0.7 乗で持ち上げる。
-    var a = 60 + Math.pow(Math.max(0,Math.min(1,s)), 0.7) * 195;
+    var t=(Math.max(0,Math.min(1,s))-VIB_LO)/(VIB_HI-VIB_LO); t=Math.max(0,Math.min(1,t));
+    var a = 60 + Math.pow(t, 0.7) * 195;
     return Math.max(1, Math.min(255, Math.round(a)));
   }
   function natFire(strength){
@@ -322,58 +326,176 @@
   }
 
   /* ---------- plasma ---------- */
-  function seg(x0,y0,x1,y1,disp,depth,branch){
-    if(depth<=0){ ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); return; }
+  /* ---------- plasma ---------- */
+  // 稲妻を「線分の配列」として組み立てる。
+  // 3回なぞって太さと色を変えるので、経路の生成は1本につき1回で済む。
+  function buildSeg(out,x0,y0,x1,y1,disp,depth,branch){
+    if(depth<=0){ out.push(x0,y0,x1,y1); return; }
     var mx=(x0+x1)/2+(Math.random()-0.5)*disp;
     var my=(y0+y1)/2+(Math.random()-0.5)*disp;
-    seg(x0,y0,mx,my,disp*0.55,depth-1,branch);
-    seg(mx,my,x1,y1,disp*0.55,depth-1,branch);
-    if(branch>0&&Math.random()<0.32){
-      var bx=mx+(mx-x0)*0.8+(Math.random()-0.5)*disp;
-      var by=my+(my-y0)*0.8+(Math.random()-0.5)*disp;
-      seg(mx,my,bx,by,disp*0.5,depth-1,branch-1);
+    buildSeg(out,x0,y0,mx,my,disp*0.55,depth-1,branch);
+    buildSeg(out,mx,my,x1,y1,disp*0.55,depth-1,branch);
+    if(branch>0&&Math.random()<0.42){
+      var bx=mx+(mx-x0)*0.9+(Math.random()-0.5)*disp;
+      var by=my+(my-y0)*0.9+(Math.random()-0.5)*disp;
+      buildSeg(out,mx,my,bx,by,disp*0.5,depth-1,branch-1);
     }
   }
+  function strokeSegs(a,w,color){
+    if(!a.length) return;
+    ctx.strokeStyle=color; ctx.lineWidth=w;
+    ctx.beginPath();
+    for(var i=0;i<a.length;i+=4){ ctx.moveTo(a[i],a[i+1]); ctx.lineTo(a[i+2],a[i+3]); }
+    ctx.stroke();
+  }
+
+  // 電極の位置（正規化座標）。先頭が本体のコイルで常に生きている。
+  var SRC=[[0.50,1.00],[0.00,0.60],[1.00,0.60],[0.14,0.00],[0.86,0.00]];
+  function srcTip(i,W,H){
+    var d=SRC[i], m=16, x=d[0]*W, y=d[1]*H, dx=0, dy=0;
+    if(d[0]===0){ x=m; dx=1; } else if(d[0]===1){ x=W-m; dx=-1; }
+    if(d[1]===0){ y=m; dy=1; } else if(d[1]===1){ y=H-m; dy=-1; }
+    return {bx:x, by:y, tx:x+dx*16, ty:y+dy*16};
+  }
+
+  // 画面の縁のどこか1点
+  function edgePoint(W,H){
+    var t=Math.random()*2*(W+H);
+    if(t<W) return [t,0];
+    t-=W; if(t<H) return [W,t];
+    t-=H; if(t<W) return [W-t,H];
+    t-=W; return [0,H-t];
+  }
+
+  var sparks=[], rings=[], lastRing=0;
+
   function draw(){
-    var W=S.cssW,H=S.cssH,s=S.strength;
-    ctx.fillStyle='#05080C'; ctx.fillRect(0,0,W,H);
-    ctx.strokeStyle='rgba(47,69,88,0.3)'; ctx.lineWidth=1;
+    var W=S.cssW,H=S.cssH,s=S.strength,now=performance.now();
+
+    // 前のフレームを完全には消さない。残像がそのまま輝きになる。
+    ctx.globalCompositeOperation='source-over';
+    ctx.fillStyle='rgba(5,8,12,'+(0.38-s*s*0.28)+')';
+    ctx.fillRect(0,0,W,H);
+
+    ctx.strokeStyle='rgba(47,69,88,0.22)'; ctx.lineWidth=1;
     var step=Math.round(W/8);
     ctx.beginPath();
     for(var gx=0;gx<=W;gx+=step){ ctx.moveTo(gx+0.5,0); ctx.lineTo(gx+0.5,H); }
     for(var gy=0;gy<=H;gy+=step){ ctx.moveTo(0,gy+0.5); ctx.lineTo(W,gy+0.5); }
     ctx.stroke();
 
-    var ex=W/2, ey=H-16;
+    // 強度が上がるほど参加する電極が増える
+    var active=1+Math.round(s*(SRC.length-1)), tips=[], i, e;
+    for(i=0;i<SRC.length;i++){
+      e=srcTip(i,W,H); tips.push(e);
+      var live=(i<active);
+      ctx.strokeStyle=live?'rgba(116,214,255,'+(0.3+s*0.5)+')':'#26364A';
+      ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(e.bx,e.by); ctx.lineTo(e.tx,e.ty); ctx.stroke();
+    }
     ctx.strokeStyle='#3B5468'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(ex-28,ey); ctx.lineTo(ex+28,ey); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(ex,ey); ctx.lineTo(ex,ey-16); ctx.stroke();
-    ctx.fillStyle=s>0.02?'rgba(116,214,255,'+(0.35+s*0.65)+')':'#2F4558';
-    ctx.beginPath(); ctx.arc(ex,ey-20,5+s*5,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(tips[0].bx-30,tips[0].by); ctx.lineTo(tips[0].bx+30,tips[0].by); ctx.stroke();
+
+    // ここから加算合成。重なったところが白熱する。
+    ctx.globalCompositeOperation='lighter';
+    ctx.lineCap='round'; ctx.lineJoin='round';
+
+    for(i=0;i<active;i++){
+      e=tips[i];
+      var g0=ctx.createRadialGradient(e.tx,e.ty,0,e.tx,e.ty,10+s*22);
+      g0.addColorStop(0,'rgba(200,240,255,'+(0.5+s*0.5)+')');
+      g0.addColorStop(1,'rgba(90,190,255,0)');
+      ctx.fillStyle=g0;
+      ctx.beginPath(); ctx.arc(e.tx,e.ty,10+s*22,0,6.2832); ctx.fill();
+    }
+
+    if(s>0.015){
+      var segs=[], b, ep;
+      var disp=16+s*90;
+
+      // 電極 → 指
+      var total=3+Math.round(s*9);
+      for(b=0;b<total;b++){
+        var e2=tips[b%active];
+        var jx=S.x+(Math.random()-0.5)*(8+s*34);
+        var jy=S.y+(Math.random()-0.5)*(8+s*34);
+        buildSeg(segs,e2.tx,e2.ty,jx,jy,disp,5,s>0.35?3:1);
+      }
+
+      // 指 → 画面の縁。ここが「画面全体がコイルになる」部分。
+      if(s>0.45){
+        var edge=Math.round((s-0.45)*20);
+        for(b=0;b<edge&&segs.length<5200;b++){
+          ep=edgePoint(W,H);
+          buildSeg(segs,S.x,S.y,ep[0],ep[1],30+s*70,4,2);
+        }
+      }
+
+      // 電極どうしを横断する放電
+      if(s>0.6&&active>1){
+        var cross=Math.round((s-0.6)*12);
+        for(b=0;b<cross&&segs.length<5200;b++){
+          var i1=Math.floor(Math.random()*active), i2=Math.floor(Math.random()*active);
+          if(i1===i2) continue;
+          buildSeg(segs,tips[i1].tx,tips[i1].ty,tips[i2].tx,tips[i2].ty,40+s*90,4,1);
+        }
+      }
+
+      // 縁を這う放電（最大付近だけ）
+      if(s>0.8){
+        var crawl=Math.round((s-0.8)*14);
+        for(b=0;b<crawl&&segs.length<5200;b++){
+          var p1=edgePoint(W,H), p2=edgePoint(W,H);
+          buildSeg(segs,p1[0],p1[1],p2[0],p2[1],30+s*60,4,1);
+        }
+      }
+
+      strokeSegs(segs, 8+s*18,  'rgba(80,30,170,'+(0.10+s*0.18)+')');
+      strokeSegs(segs, 3+s*6,   'rgba(50,160,255,'+(0.22+s*0.32)+')');
+      strokeSegs(segs, 1+s*2.0, 'rgba(225,248,255,'+(0.55+s*0.45)+')');
+
+      // 火花
+      var want=Math.round(s*s*7);
+      for(i=0;i<want&&sparks.length<150;i++){
+        var a2=Math.random()*6.2832, v=1.6+Math.random()*(3+s*9);
+        sparks.push({x:S.x,y:S.y,vx:Math.cos(a2)*v,vy:Math.sin(a2)*v,l:1});
+      }
+      // 衝撃波
+      if(s>0.45&&now-lastRing>Math.max(80,340-s*280)){ rings.push({x:S.x,y:S.y,r:12,l:1}); lastRing=now; }
+    }
+
+    for(i=sparks.length-1;i>=0;i--){
+      var q=sparks[i];
+      q.x+=q.vx; q.y+=q.vy; q.vy+=0.13; q.vx*=0.984; q.vy*=0.984; q.l-=0.032;
+      if(q.l<=0){ sparks.splice(i,1); continue; }
+      ctx.strokeStyle='rgba(200,240,255,'+q.l+')'; ctx.lineWidth=1.4;
+      ctx.beginPath(); ctx.moveTo(q.x,q.y); ctx.lineTo(q.x-q.vx*2.2,q.y-q.vy*2.2); ctx.stroke();
+    }
+    for(i=rings.length-1;i>=0;i--){
+      var r=rings[i];
+      r.r+=5+s*10; r.l-=0.045;
+      if(r.l<=0){ rings.splice(i,1); continue; }
+      ctx.strokeStyle='rgba(110,200,255,'+(r.l*0.42)+')'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(r.x,r.y,r.r,0,6.2832); ctx.stroke();
+    }
 
     if(s>0.02){
-      var bolts=1+Math.round(s*4), disp=14+s*70;
-      ctx.lineCap='round';
-      for(var i=0;i<bolts;i++){
-        var jx=S.x+(Math.random()-0.5)*(6+s*26);
-        var jy=S.y+(Math.random()-0.5)*(6+s*26);
-        ctx.strokeStyle='rgba(168,124,255,'+(0.14+s*0.3)+')';
-        ctx.lineWidth=5+s*9;
-        ctx.shadowColor='#74D6FF'; ctx.shadowBlur=10+s*26;
-        ctx.beginPath(); seg(ex,ey-22,jx,jy,disp,5,s>0.45?2:1); ctx.stroke();
-        ctx.shadowBlur=4+s*12;
-        ctx.strokeStyle='rgba(232,248,255,'+(0.55+s*0.45)+')';
-        ctx.lineWidth=1+s*1.8;
-        ctx.beginPath(); seg(ex,ey-22,jx,jy,disp*0.8,5,0); ctx.stroke();
-      }
-      ctx.shadowBlur=0;
-      var g=ctx.createRadialGradient(S.x,S.y,0,S.x,S.y,18+s*52);
-      g.addColorStop(0,'rgba(232,248,255,'+(0.5+s*0.4)+')');
-      g.addColorStop(0.35,'rgba(116,214,255,'+(0.2+s*0.25)+')');
-      g.addColorStop(1,'rgba(116,214,255,0)');
+      var rr=22+s*s*Math.max(W,H)*0.55;
+      var g=ctx.createRadialGradient(S.x,S.y,0,S.x,S.y,rr);
+      g.addColorStop(0,'rgba(255,255,255,'+(0.45+s*0.5)+')');
+      g.addColorStop(0.28,'rgba(140,220,255,'+(0.22+s*0.3)+')');
+      g.addColorStop(1,'rgba(90,140,255,0)');
       ctx.fillStyle=g;
-      ctx.beginPath(); ctx.arc(S.x,S.y,18+s*52,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(S.x,S.y,rr,0,6.2832); ctx.fill();
     }
+    // 全体が明るくなる
+    if(s>0.3){ ctx.fillStyle='rgba(30,90,170,'+((s-0.3)*0.16)+')'; ctx.fillRect(0,0,W,H); }
+    // 最大付近でときどき画面全体が閃く
+    if(s>0.82&&Math.random()<0.07){
+      ctx.fillStyle='rgba(190,225,255,'+((s-0.82)*0.55)+')'; ctx.fillRect(0,0,W,H);
+    }
+
+    ctx.globalCompositeOperation='source-over';
   }
 
   function tick(){
@@ -387,7 +509,7 @@
     var vname=S.blind.on?'??':(S.vib==='off'?'OFF':
       (S.vib==='pwm'?('PWM '+sp.on+'/'+sp.off):
       (S.vib==='native'?('AMP '+lastAmp):('PULSE '+sp.on+'/'+sp.off+' a'+lastAmp))));
-    $('hudSrc').innerHTML='source '+(S.blind.on?'—':S.src)+'<br>vib '+vname;
+    $('hudSrc').innerHTML='source '+(S.blind.on?'—':S.src)+'<br>vib '+vname+'<br>arc '+(1+Math.round(S.strength*4));
     requestAnimationFrame(tick);
   }
 
