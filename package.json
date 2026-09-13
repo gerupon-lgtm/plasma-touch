@@ -1,0 +1,10 @@
+{
+  "name": "plasma-touch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "触覚FB検証プロトタイプ: PWM振動 vs ネイティブ振幅制御の体感比較",
+  "scripts": {
+    "prepare:android": "node scripts/prepare-android.mjs",
+    "apk": "node scripts/prepare-android.mjs && cap sync android && cd android && ./gradlew assembleDebug"
+  }
+}

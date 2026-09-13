@@ -1,0 +1,8 @@
+{
+  "appId": "com.sikumilab.plasmatouch",
+  "appName": "PlasmaTouch",
+  "webDir": "www",
+  "android": {
+    "webContentsDebuggingEnabled": true
+  }
+}
