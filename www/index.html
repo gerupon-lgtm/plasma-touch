@@ -148,11 +148,13 @@
   /* ---------- 音（ジジジという放電音） ---------- */
   // ノイズを帯域で削り、方形波のLFOで断続させる。
   // 断続の速さと帯域の高さを強度で動かすと「ジッ…ジッ」から「ジジジジ」まで連続的に変わる。
-  var A=null, silentAt=0;
-  function audioInit(){
-    if(A){ if(A.ctx.state==='suspended') A.ctx.resume(); return; }
+  var A=null, audioUnlocked=false;
+  var DBG=/[?&]debug=1/.test(location.search);
+
+  function audioCreate(){
+    if(A) return A;
     var AC=window.AudioContext||window.webkitAudioContext;
-    if(!AC) return;
+    if(!AC) return null;
     var ac=new AC();
 
     var len=Math.floor(ac.sampleRate*2);
@@ -177,23 +179,44 @@
     saw.connect(sawG); sawG.connect(lp);
     lp.connect(master); master.connect(ac.destination);
 
-    noise.start(); lfo.start(); saw.start();
+    try{ noise.start(0); lfo.start(0); saw.start(0); }catch(e){}
     A={ctx:ac,bp:bp,lfo:lfo,saw:saw,sawG:sawG,master:master};
-    if(ac.state==='suspended') ac.resume();
+    return A;
   }
+
+  // iOS の解錠。pointerdown だけでは開かないことがあるので touchend / click でも試し、
+  // さらに「無音を1サンプル鳴らす」という手順を踏む。これが無いと resume() が通らない端末がある。
+  function audioUnlock(){
+    var a=audioCreate();
+    if(!a) return;
+    var ac=a.ctx;
+    try{
+      var b=ac.createBuffer(1,1,ac.sampleRate);
+      var src=ac.createBufferSource();
+      src.buffer=b; src.connect(ac.destination); src.start(0);
+    }catch(e){}
+    if(ac.state!=='running'){
+      var pr=ac.resume();
+      if(pr&&pr.then) pr.then(function(){ audioUnlocked=(ac.state==='running'); }).catch(function(){});
+    } else audioUnlocked=true;
+  }
+  ['touchstart','touchend','click','pointerdown'].forEach(function(ev){
+    document.addEventListener(ev,audioUnlock,{passive:true});
+  });
+
   // 見た目より下に床を作る。軽く触れただけでも小さく鳴る。
   function audioLevel(s){ return 0.12*Math.min(1,s*3)+0.88*visCurve(s); }
   function audioUpdate(s){
-    if(!A||A.ctx.state!=='running') return;
+    if(!A) return;                                   // state は見ない（停止中に書いても害はない）
     var t=A.ctx.currentTime, a=audioLevel(s);
-    var j=1+(Math.random()-0.5)*0.12;              // 揺らぎがないと電子音になる
+    var j=1+(Math.random()-0.5)*0.12;                // 揺らぎがないと電子音になる
     var rate=(26+a*118)*j;
     A.lfo.frequency.setTargetAtTime(rate,t,0.03);
     A.saw.frequency.setTargetAtTime(rate*0.5,t,0.03);
     A.bp.frequency.setTargetAtTime((900+a*2700)*j,t,0.03);
     A.bp.Q.setTargetAtTime(1.2+a*5,t,0.05);
     A.sawG.gain.setTargetAtTime(a*a*0.06,t,0.04);
-    A.master.gain.setTargetAtTime(a*0.34,t,0.03);
+    A.master.gain.setTargetAtTime(a*0.55,t,0.03);
   }
 
   /* ---------- 振動（Web PWM） ---------- */
@@ -375,11 +398,7 @@
     if(!S.active&&S.strength<0.003) S.strength=0;
 
     audioUpdate(S.strength);
-    // 無音が続いたら音声を止めて電池を節約する
-    if(S.strength<=0){
-      if(!silentAt) silentAt=now;
-      else if(A&&A.ctx.state==='running'&&now-silentAt>1600){ A.ctx.suspend(); }
-    } else silentAt=0;
+    if(DBG) dbgUpdate();
 
     draw(now);
     requestAnimationFrame(tick);
@@ -393,8 +412,7 @@
     // 一瞬のタップでも取りこぼさないよう、押した時点で立ち上げておく
     var t0=computeTarget();
     if(t0>S.strength) S.strength=t0*0.55;
-    silentAt=0;
-    audioInit();
+    audioUnlock();
     document.body.classList.add('live');
     hintEl.classList.add('gone');
     startVib();
@@ -408,9 +426,29 @@
   document.addEventListener('visibilitychange',function(){
     if(document.hidden){
       S.active=false; S.strength=0; stopVib();
-      if(A&&A.ctx.state==='running'){ A.master.gain.value=0; A.ctx.suspend(); }
+      if(A){ try{ A.master.gain.value=0; }catch(e){} }
     }
   });
+
+  /* ---------- 診断（?debug=1 のときだけ出る） ---------- */
+  var dbgEl=null;
+  function dbgUpdate(){
+    if(!dbgEl){
+      dbgEl=document.createElement('div');
+      dbgEl.style.cssText='position:fixed;left:8px;top:8px;z-index:9;font:11px/1.5 ui-monospace,monospace;'+
+        'color:#9fe;background:rgba(0,0,0,.6);padding:6px 8px;pointer-events:none;white-space:pre';
+      document.body.appendChild(dbgEl);
+    }
+    var a=A?A.ctx:null;
+    dbgEl.textContent=
+      'AudioContext : '+(a?'あり':'なし')+'\n'+
+      'state        : '+(a?a.state:'-')+'\n'+
+      'unlocked     : '+audioUnlocked+'\n'+
+      'sampleRate   : '+(a?a.sampleRate:'-')+'\n'+
+      'master.gain  : '+(a?A.master.gain.value.toFixed(3):'-')+'\n'+
+      'strength     : '+S.strength.toFixed(3)+'\n'+
+      'vibrate      : '+(!!navigator.vibrate);
+  }
 
   /* ---------- 起動 ---------- */
   measure();
