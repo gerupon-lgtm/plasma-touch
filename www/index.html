@@ -76,12 +76,20 @@
   var cv=document.getElementById('c'), ctx=cv.getContext('2d');
   var brandEl=document.body, hintEl=document.getElementById('hint'), safeEl=document.getElementById('safe');
 
-  var S={
-    active:false, strength:0, target:0,
-    x:0, y:0, W:0, H:0, safeB:0,
-    area:NaN, pressure:NaN, w:NaN, h:NaN,
-    pMin:null, pMax:null, aMin:null, aMax:null, src:'area'
-  };
+  var S={ strength:0, W:0, H:0, safeB:0,
+          pMin:null, pMax:null, aMin:null, aMax:null, src:'area' };
+
+  // 指ごとの状態。離した指も減衰しきるまで残す。
+  var P={};          // pointerId -> finger（接地中）
+  var FADE=[];       // 離した直後の指（減衰中）
+  function fingers(){
+    var a=[],id;
+    for(id in P) a.push(P[id]);
+    for(var i=0;i<FADE.length;i++) a.push(FADE[i]);
+    return a;
+  }
+  function hasActive(){ for(var id in P) return true; return false; }
+  function countActive(){ var n=0; for(var id in P) n++; return n; }
 
   /* ---------- サイズとコイルの配置（端末ごとに実測） ---------- */
   var DPR=Math.min(window.devicePixelRatio||1,2);
@@ -103,40 +111,54 @@
     coil.baseY=h-S.safeB-14;                        // 台座
     coil.y=coil.baseY-8-coil.wind;                  // トロイド中心（＝発生源）
     coil.x=w/2;
-
-    if(!S.active){ S.x=w/2; S.y=h*0.34; }
   }
   window.addEventListener('resize',measure);
   window.addEventListener('orientationchange',function(){ setTimeout(measure,250); });
   if(window.visualViewport) window.visualViewport.addEventListener('resize',measure);
 
   /* ---------- 強度 ---------- */
-  function readPointer(e){
-    if(typeof e.pressure==='number') S.pressure=e.pressure;
-    if(typeof e.width==='number'&&e.width>0) S.w=e.width;
-    if(typeof e.height==='number'&&e.height>0) S.h=e.height;
-    if(S.w>0&&S.h>0) S.area=S.w*S.h;
-    S.x=e.clientX; S.y=e.clientY;
-    if(isFinite(S.pressure)){
-      if(S.pMin===null||S.pressure<S.pMin) S.pMin=S.pressure;
-      if(S.pMax===null||S.pressure>S.pMax) S.pMax=S.pressure;
+  function clamp01(v){ return !isFinite(v)?0:Math.max(0,Math.min(1,v)); }
+
+  // 値域の学習は全指で共有する。指ごとに校正すると基準がばらつくため。
+  function readPointer(f,e){
+    if(typeof e.pressure==='number') f.pressure=e.pressure;
+    if(typeof e.width==='number'&&e.width>0) f.w=e.width;
+    if(typeof e.height==='number'&&e.height>0) f.h=e.height;
+    if(f.w>0&&f.h>0) f.area=f.w*f.h;
+    f.x=e.clientX; f.y=e.clientY;
+    if(isFinite(f.pressure)){
+      if(S.pMin===null||f.pressure<S.pMin) S.pMin=f.pressure;
+      if(S.pMax===null||f.pressure>S.pMax) S.pMax=f.pressure;
     }
-    if(isFinite(S.area)){
-      if(S.aMin===null||S.area<S.aMin) S.aMin=S.area;
-      if(S.aMax===null||S.area>S.aMax) S.aMax=S.area;
+    if(isFinite(f.area)){
+      if(S.aMin===null||f.area<S.aMin) S.aMin=f.area;
+      if(S.aMax===null||f.area>S.aMax) S.aMax=f.area;
     }
     // pressure が動く端末ならそれを使う（0〜1 正規化済みで校正不要）
     S.src=(S.pMin!==null&&(S.pMax-S.pMin)>0.02)?'pressure':'area';
   }
-  function clamp01(v){ return !isFinite(v)?0:Math.max(0,Math.min(1,v)); }
-  function computeTarget(){
-    if(S.src==='pressure') return clamp01(S.pressure);
+  function targetOf(f){
+    if(S.src==='pressure') return clamp01(f.pressure);
     if(S.aMin===null) return 0;
     var span=S.aMax-S.aMin;
     if(span<1e-6) return 0.2;
     var lo=S.aMin, hi=S.aMax;
     if(span<lo*0.12) hi=lo+lo*0.12;
-    return clamp01((S.area-lo)/(hi-lo));
+    return clamp01((f.area-lo)/(hi-lo));
+  }
+
+  // 合算：強い順に並べ、2本目以降の重みを段々小さくする。
+  // 指を増やすほど1本あたりの効きが落ちるので、多点でも天井に張り付かず加減できる。
+  // EXTRA = 2本目の重み、FALLOFF = 3本目以降の逓減率。ここだけで感度が決まる。
+  var EXTRA=0.40, FALLOFF=0.62;
+  function combine(list){
+    var v=[],i;
+    for(i=0;i<list.length;i++) v.push(list[i].s);
+    if(!v.length) return 0;
+    v.sort(function(a,b){ return b-a; });
+    var total=v[0], w=EXTRA;
+    for(i=1;i<v.length;i++){ total+=v[i]*w; w*=FALLOFF; }
+    return Math.min(1,total);
   }
 
   /* ---------- カーブ ---------- */
@@ -386,7 +408,7 @@
     vibFire(S.strength,performance.now());
     vibTimer=setInterval(function(){
       // 指を離しても、減衰が終わるまで追従させる
-      if(!S.active && S.strength<0.03){ stopVib(); return; }
+      if(!hasActive() && S.strength<0.03){ stopVib(); return; }
       vibFire(S.strength,performance.now());
     },90);
   }
@@ -433,101 +455,127 @@
   }
 
   function draw(now){
-    var W=S.W,H=S.H,s=S.strength,c=coil;
-    var v=visCurve(s);                      // 派手さ
-    var q=S.active?(0.10+v*0.90):v;         // 触れている間は最低限の存在感を残す
-    var breath=0.5+0.5*Math.sin(now/2600);  // 待機中のゆっくりした呼吸
+    var W=S.W,H=S.H,c=coil,i,b;
+    var vAll=visCurve(S.strength);                 // 全体の派手さ
+    var breath=0.5+0.5*Math.sin(now/2600);
 
     ctx.globalCompositeOperation='source-over';
-    ctx.fillStyle='rgba(5,8,12,'+(0.40-v*v*0.30)+')';
+    ctx.fillStyle='rgba(5,8,12,'+(0.40-vAll*vAll*0.30)+')';
     ctx.fillRect(0,0,W,H);
 
-    drawCoil(v,breath);
+    drawCoil(vAll,breath);
 
     ctx.globalCompositeOperation='lighter';
     ctx.lineCap='round'; ctx.lineJoin='round';
 
-    // トロイドのコロナ（待機中も静かに息づく）
-    var cr=c.rx*(0.9+breath*0.18)+v*Math.min(W,H)*0.16;
+    var cr=c.rx*(0.9+breath*0.18)+vAll*Math.min(W,H)*0.16;
     var gc=ctx.createRadialGradient(c.x,c.y,0,c.x,c.y,cr);
-    gc.addColorStop(0,'rgba(200,238,255,'+(0.16+breath*0.06+v*0.6)+')');
+    gc.addColorStop(0,'rgba(200,238,255,'+(0.16+breath*0.06+vAll*0.6)+')');
     gc.addColorStop(1,'rgba(80,180,255,0)');
     ctx.fillStyle=gc;
     ctx.beginPath(); ctx.arc(c.x,c.y,cr,0,6.2832); ctx.fill();
 
-    if(S.active||v>0.01){
-      var segs=[], b, big=Math.max(W,H);
-      var disp=14+v*84;
+    var list=fingers(), n=list.length;
+    var qAll=hasActive()?(0.10+vAll*0.90):vAll;
 
-      // ① 発生源 → 指。触れていれば必ず1本は出る（35%以下でも細く静かに）
-      var main=1+Math.round(v*5);
-      for(b=0;b<main;b++){
-        var jx=S.x+(Math.random()-0.5)*(8+v*30);
-        var jy=S.y+(Math.random()-0.5)*(8+v*30);
-        buildSeg(segs,c.x,c.y,jx,jy,disp,5,v>0.25?3:1);
-      }
-      // ② トロイドから四方へ。最大で画面外まで届く。
-      var st=Math.round(v*v*28);
-      for(b=0;b<st&&segs.length<6000;b++){
-        var ang=-0.08-Math.random()*Math.PI*0.84;
-        var len=(0.22+Math.random()*0.78)*(0.32+v*0.90)*big;
-        buildSeg(segs,c.x,c.y,c.x+Math.cos(ang)*len,c.y+Math.sin(ang)*len,20+v*72,4,v>0.45?2:1);
-      }
-      // ③ 指先から散る枝
-      if(v>0.25){
-        var sp2=Math.round((v-0.25)*16);
-        for(b=0;b<sp2&&segs.length<6000;b++){
-          var a3=Math.random()*6.2832, l3=22+Math.random()*(36+v*100);
-          buildSeg(segs,S.x,S.y,S.x+Math.cos(a3)*l3,S.y+Math.sin(a3)*l3,16+v*32,4,1);
+    // 離した指は 0.10 を下回ったら描かない。音と振動はこの後も減衰を続ける。
+    var live=[], dead=[], fadeMax=0;
+    for(i=0;i<n;i++){
+      var fx=list[i];
+      if(fx.active) live.push(fx);
+      else if(fx.s>0.10){ dead.push(fx); if(fx.s>fadeMax) fadeMax=fx.s; }
+    }
+
+    if(live.length || dead.length){
+      var segs=[], segsF=[], big=Math.max(W,H);
+      var nDraw=Math.max(1,live.length+dead.length);
+      var budget=Math.max(1, Math.round(11/nDraw));
+      var tendrilBudget=Math.max(1, Math.round(14/nDraw));
+
+      function emit(out,f,allowTendril){
+        var vf=visCurve(f.s), disp=14+vf*84;
+        var mainN=Math.min(budget, 1+Math.round(vf*5));
+        for(var b=0;b<mainN;b++){
+          var jx=f.x+(Math.random()-0.5)*(8+vf*30);
+          var jy=f.y+(Math.random()-0.5)*(8+vf*30);
+          buildSeg(out,c.x,c.y,jx,jy,disp,5,vf>0.25?3:1);
+        }
+        if(allowTendril && vf>0.25){
+          var sp2=Math.min(tendrilBudget, Math.round((vf-0.25)*16));
+          for(b=0;b<sp2&&out.length<6000;b++){
+            var a3=Math.random()*6.2832, l3=22+Math.random()*(36+vf*100);
+            buildSeg(out,f.x,f.y,f.x+Math.cos(a3)*l3,f.y+Math.sin(a3)*l3,16+vf*32,4,1);
+          }
         }
       }
 
-      strokeSegs(segs, 5+v*20,   'rgba(80,30,170,'+(0.06+q*0.20)+')');
-      strokeSegs(segs, 2.2+v*6,  'rgba(50,160,255,'+(0.14+q*0.36)+')');
-      strokeSegs(segs, 0.9+v*2.0,'rgba(225,248,255,'+(0.34+q*0.62)+')');
+      for(i=0;i<live.length;i++) emit(segs,live[i],true);
+      for(i=0;i<dead.length;i++) emit(segsF,dead[i],false);
 
-      var want=Math.round(v*v*7);
-      for(b=0;b<want&&sparks.length<150;b++){
-        var a2=Math.random()*6.2832, vv=1.6+Math.random()*(3+v*9);
-        sparks.push({x:S.x,y:S.y,vx:Math.cos(a2)*vv,vy:Math.sin(a2)*vv,l:1});
+      // トロイドから四方へ。ここは全体の強さで決まる。
+      var st=Math.round(vAll*vAll*28);
+      for(b=0;b<st&&segs.length<6000;b++){
+        var ang=-0.08-Math.random()*Math.PI*0.84;
+        var len=(0.22+Math.random()*0.78)*(0.32+vAll*0.90)*big;
+        buildSeg(segs,c.x,c.y,c.x+Math.cos(ang)*len,c.y+Math.sin(ang)*len,20+vAll*72,4,vAll>0.45?2:1);
       }
-      if(v>0.35&&now-lastBloom>Math.max(220,700-v*420)){
+
+      strokeSegs(segs, 5+vAll*20,   'rgba(80,30,170,'+(0.06+qAll*0.20)+')');
+      strokeSegs(segs, 2.2+vAll*6,  'rgba(50,160,255,'+(0.14+qAll*0.36)+')');
+      strokeSegs(segs, 0.9+vAll*2.0,'rgba(225,248,255,'+(0.34+qAll*0.62)+')');
+
+      // 離した指のぶんは、その指の残量に比例して暗く描く
+      if(segsF.length){
+        var fm=fadeMax*fadeMax;
+        strokeSegs(segsF, 4+fadeMax*10,   'rgba(80,30,170,'+(0.06*fm)+')');
+        strokeSegs(segsF, 1.8+fadeMax*3,  'rgba(50,160,255,'+(0.22*fm)+')');
+        strokeSegs(segsF, 0.8+fadeMax*1.2,'rgba(225,248,255,'+(0.45*fm)+')');
+      }
+
+      var want=Math.round(vAll*vAll*7);
+      for(b=0;b<want&&sparks.length<150&&live.length;b++){
+        var src=live[(Math.random()*live.length)|0];
+        var a2=Math.random()*6.2832, vv=1.6+Math.random()*(3+vAll*9);
+        sparks.push({x:src.x,y:src.y,vx:Math.cos(a2)*vv,vy:Math.sin(a2)*vv,l:1});
+      }
+      if(vAll>0.35&&now-lastBloom>Math.max(220,700-vAll*420)){
         rings.push({x:c.x,y:c.y,r:c.rx,l:1});
-        if(v>0.6){ bloom=Math.min(1,bloom+0.55); }
+        if(vAll>0.6){ bloom=Math.min(1,bloom+0.55); }
         lastBloom=now;
       }
     }
 
-    var i;
     for(i=sparks.length-1;i>=0;i--){
-      var p=sparks[i];
-      p.x+=p.vx; p.y+=p.vy; p.vy+=0.13; p.vx*=0.984; p.vy*=0.984; p.l-=0.030;
-      if(p.l<=0){ sparks.splice(i,1); continue; }
-      ctx.strokeStyle='rgba(200,240,255,'+p.l+')'; ctx.lineWidth=1.4;
-      ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x-p.vx*2.2,p.y-p.vy*2.2); ctx.stroke();
+      var pt=sparks[i];
+      pt.x+=pt.vx; pt.y+=pt.vy; pt.vy+=0.13; pt.vx*=0.984; pt.vy*=0.984; pt.l-=0.030;
+      if(pt.l<=0){ sparks.splice(i,1); continue; }
+      ctx.strokeStyle='rgba(200,240,255,'+pt.l+')'; ctx.lineWidth=1.4;
+      ctx.beginPath(); ctx.moveTo(pt.x,pt.y); ctx.lineTo(pt.x-pt.vx*2.2,pt.y-pt.vy*2.2); ctx.stroke();
     }
     for(i=rings.length-1;i>=0;i--){
       var r=rings[i];
-      r.r+=5+v*14; r.l-=0.032;
+      r.r+=5+vAll*14; r.l-=0.032;
       if(r.l<=0){ rings.splice(i,1); continue; }
       ctx.strokeStyle='rgba(110,200,255,'+(r.l*0.34)+')'; ctx.lineWidth=2;
       ctx.beginPath(); ctx.arc(r.x,r.y,r.r,0,6.2832); ctx.stroke();
     }
 
-    // 指先の光
-    if(S.active||v>0.02){
-      var rr=16+v*v*Math.max(W,H)*0.46;
-      var g=ctx.createRadialGradient(S.x,S.y,0,S.x,S.y,rr);
-      g.addColorStop(0,'rgba(255,255,255,'+(0.30+q*0.60)+')');
-      g.addColorStop(0.28,'rgba(140,220,255,'+(0.14+q*0.34)+')');
+    // 指先の光は1本ずつ。離した指は残量そのものに比例させ、崖なく消す。
+    for(i=0;i<n;i++){
+      var ff=list[i], vff=visCurve(ff.s);
+      var qf=ff.active?(0.10+vff*0.90):(ff.s*ff.s*0.9);
+      if(qf<=0.02) continue;
+      var rr=ff.active ? (16+vff*vff*Math.max(W,H)*0.46)
+                       : (10+ff.s*ff.s*Math.max(W,H)*0.28);
+      var g=ctx.createRadialGradient(ff.x,ff.y,0,ff.x,ff.y,rr);
+      g.addColorStop(0,'rgba(255,255,255,'+(0.30+qf*0.60)+')');
+      g.addColorStop(0.28,'rgba(140,220,255,'+(0.14+qf*0.34)+')');
       g.addColorStop(1,'rgba(90,140,255,0)');
       ctx.fillStyle=g;
-      ctx.beginPath(); ctx.arc(S.x,S.y,rr,0,6.2832); ctx.fill();
+      ctx.beginPath(); ctx.arc(ff.x,ff.y,rr,0,6.2832); ctx.fill();
     }
 
-    if(v>0.25){ ctx.fillStyle='rgba(30,90,170,'+((v-0.25)*0.20)+')'; ctx.fillRect(0,0,W,H); }
-
-    // 放電の閃き。点滅ではなく、膨らんで引く発光にする。
+    if(vAll>0.25){ ctx.fillStyle='rgba(30,90,170,'+((vAll-0.25)*0.20)+')'; ctx.fillRect(0,0,W,H); }
     if(bloom>0.002){
       ctx.fillStyle='rgba(185,222,255,'+(bloom*bloom*0.20)+')';
       ctx.fillRect(0,0,W,H);
@@ -539,10 +587,20 @@
 
   function tick(now){
     now=now||0;
-    S.target=S.active?computeTarget():0;
-    // 平滑化は最小限（微小な揺れが手触りの源）。離したときだけゆっくり落とす。
-    S.strength+=(S.target-S.strength)*(S.active?0.35:0.055);
-    if(!S.active&&S.strength<0.003) S.strength=0;
+    var id,i;
+    // 接地中の指：目標へ追従（平滑化は最小限。微小な揺れが手触りの源）
+    for(id in P){
+      var f=P[id];
+      f.target=targetOf(f);
+      f.s += (f.target-f.s)*0.35;
+    }
+    // 離した指：ゆっくり落として、消えたら破棄
+    for(i=FADE.length-1;i>=0;i--){
+      var g=FADE[i];
+      g.s += (0-g.s)*0.055;
+      if(g.s<0.003) FADE.splice(i,1);
+    }
+    S.strength=combine(fingers());
 
     audioUpdate(S.strength);
     if(DBG) dbgUpdate();
@@ -551,37 +609,59 @@
     requestAnimationFrame(tick);
   }
 
-  /* ---------- 入力 ---------- */
+  /* ---------- 入力（多点） ---------- */
   cv.addEventListener('pointerdown',function(e){
     e.preventDefault();
-    if(cv.setPointerCapture) cv.setPointerCapture(e.pointerId);
-    S.active=true; readPointer(e);
-    S.downT=performance.now(); S.downX=e.clientX; S.downY=e.clientY;
+    var f={ id:e.pointerId, active:true, x:e.clientX, y:e.clientY,
+            pressure:NaN, area:NaN, w:NaN, h:NaN, target:0, s:0,
+            downT:performance.now(), downX:e.clientX, downY:e.clientY,
+            solo:(countActive()===0) };
+    // 2本目が降りた時点で、それまでの指は「単独タップ」ではなくなる
+    if(!f.solo){ for(var id in P) P[id].solo=false; }
+    P[e.pointerId]=f;
+    readPointer(f,e);
     // 一瞬のタップでも取りこぼさないよう、押した時点で立ち上げておく
-    var t0=computeTarget();
-    if(t0>S.strength) S.strength=t0*0.55;
+    var t0=targetOf(f);
+    f.s=t0*0.55;
     audioUnlock();
     document.body.classList.add('live');
     hintEl.classList.add('gone');
     startVib();
   });
+
   cv.addEventListener('pointermove',function(e){
-    if(!S.active) return; e.preventDefault(); readPointer(e);
+    var f=P[e.pointerId];
+    if(!f) return;
+    e.preventDefault();
+    readPointer(f,e);
   });
-  function up(e){                                  // 振動と音は減衰に追従して止まる
-    if(!S.active) return;
-    S.active=false;
-    if(e&&typeof e.clientX==='number'){
+
+  function release(e,isTap){
+    var f=P[e.pointerId];
+    if(!f) return;
+    delete P[e.pointerId];
+    f.active=false;
+    FADE.push(f);                                  // 振動・音・光は減衰に追従する
+    if(isTap && f.solo && typeof e.clientX==='number'){
       var now=performance.now();
-      var dx=e.clientX-S.downX, dy=e.clientY-S.downY;
-      registerTap(e.clientX, now-S.downT, Math.sqrt(dx*dx+dy*dy), now);
+      var dx=e.clientX-f.downX, dy=e.clientY-f.downY;
+      registerTap(e.clientX, now-f.downT, Math.sqrt(dx*dx+dy*dy), now);
     }
   }
-  cv.addEventListener('pointerup',up);
-  cv.addEventListener('pointercancel',function(){ S.active=false; tapN=0; });
+  cv.addEventListener('pointerup',function(e){ release(e,true); });
+  cv.addEventListener('pointercancel',function(e){ release(e,false); tapN=0; });
+  // 取りこぼし防止：canvas の外で離した場合も必ず解放する
+  window.addEventListener('pointerup',function(e){ release(e,false); });
+  window.addEventListener('pointercancel',function(e){ release(e,false); });
+  cv.addEventListener('lostpointercapture',function(e){ release(e,false); });
+  window.addEventListener('blur',function(){
+    for(var id in P){ P[id].active=false; FADE.push(P[id]); }
+    P={};
+  });
+
   document.addEventListener('visibilitychange',function(){
     if(document.hidden){
-      S.active=false; S.strength=0; stopVib();
+      P={}; FADE=[]; S.strength=0; stopVib();
       if(A){ try{ A.master.gain.value=0; }catch(e){} }
     }
   });
@@ -603,6 +683,7 @@
       'sampleRate   : '+(a?a.sampleRate:'-')+'\n'+
       'master.gain  : '+(a?A.master.gain.value.toFixed(3):'-')+'\n'+
       'strength     : '+S.strength.toFixed(3)+'\n'+
+      'fingers      : '+countActive()+' (+'+FADE.length+')\n'+
       'vibrate      : '+(!!navigator.vibrate)+'\n'+
       'sound        : '+sndIdx+' '+NAME[curSnd()]+'\n'+
       'mediaout     : '+MEDIAOUT+(mediaEl?(mediaEl.paused?' (paused)':' (playing)'):'');
