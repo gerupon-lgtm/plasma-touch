@@ -42,6 +42,17 @@
     transition:opacity 1.4s ease;
   }
   #hint.gone{opacity:0}
+  #hint .sub{display:inline-block;margin-top:6px;font-size:10px;letter-spacing:.16em;text-indent:.16em;opacity:.62}
+
+  #sndName{
+    position:fixed;left:0;right:0;
+    top:calc(env(safe-area-inset-top) + 42px);
+    text-align:center;pointer-events:none;
+    font-size:11px;letter-spacing:.34em;text-indent:.34em;
+    color:rgba(150,200,230,0);
+    transition:color .55s ease;
+  }
+  #sndName.show{color:rgba(150,200,230,.45)}
 
   /* セーフエリアの実寸を測るためだけの要素 */
   #safe{
@@ -55,7 +66,8 @@
 <body>
 <canvas id="c"></canvas>
 <div id="brand">プラズマタッチ検証ページ</div>
-<div id="hint">画面に触れてください</div>
+<div id="sndName"></div>
+<div id="hint">画面に触れてください<br><span class="sub">右端を3回タップで音が変わる ／ 左端で戻る</span></div>
 <div id="safe"></div>
 
 <script>
@@ -145,11 +157,14 @@
     return 0.15+(t*t*(3-2*t))*0.85;
   }
 
-  /* ---------- 音（ジジジという放電音） ---------- */
-  // ノイズを帯域で削り、方形波のLFOで断続させる。
-  // 断続の速さと帯域の高さを強度で動かすと「ジッ…ジッ」から「ジジジジ」まで連続的に変わる。
+  /* ---------- 音 ---------- */
+  // 4系統を並列に組んでおき、ゲインで切り替える。切り替えでプツッと切れないよう 短くクロスフェードする。
   var A=null, audioUnlocked=false;
   var DBG=/[?&]debug=1/.test(location.search);
+  var SOUNDS=['コイル','アーク','コロナ','ハム'];
+  var MODE_GAIN=[0.55, 0.85, 0.32, 0.75];   // 系統ごとに体感音量が違うので個別に調整
+  var sndIdx=0;
+  try{ var sv=localStorage.getItem('pt.snd'); if(sv!==null) sndIdx=Math.min(3,Math.max(0,parseInt(sv,10)||0)); }catch(e){}
 
   function audioCreate(){
     if(A) return A;
@@ -162,26 +177,65 @@
     for(var i=0;i<len;i++) d[i]=Math.random()*2-1;
     var noise=ac.createBufferSource(); noise.buffer=buf; noise.loop=true;
 
-    var bp=ac.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1000; bp.Q.value=1.5;
-
-    var am=ac.createGain(); am.gain.value=0.34;        // ここにLFOが加算される
-    var lfo=ac.createOscillator(); lfo.type='square'; lfo.frequency.value=30;
-    var lfoDepth=ac.createGain(); lfoDepth.gain.value=0.34;
-    lfo.connect(lfoDepth); lfoDepth.connect(am.gain);
-
-    var saw=ac.createOscillator(); saw.type='sawtooth'; saw.frequency.value=30;
-    var sawG=ac.createGain(); sawG.gain.value=0;
-
-    var lp=ac.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=7000;
+    var lp=ac.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=9500;
     var master=ac.createGain(); master.gain.value=0;
-
-    noise.connect(bp); bp.connect(am); am.connect(lp);
-    saw.connect(sawG); sawG.connect(lp);
     lp.connect(master); master.connect(ac.destination);
+    function bus(){ var g=ac.createGain(); g.gain.value=0; g.connect(lp); return g; }
+    var gA=bus(), gB=bus(), gC=bus(), gD=bus();
 
-    try{ noise.start(0); lfo.start(0); saw.start(0); }catch(e){}
-    A={ctx:ac,bp:bp,lfo:lfo,saw:saw,sawG:sawG,master:master};
+    // ① コイル — 方形波で規則的に断続させる（従来の音）
+    var bpA=ac.createBiquadFilter(); bpA.type='bandpass'; bpA.frequency.value=1000; bpA.Q.value=1.5;
+    var amA=ac.createGain(); amA.gain.value=0.34;
+    var lfoA=ac.createOscillator(); lfoA.type='square'; lfoA.frequency.value=30;
+    var lfoAD=ac.createGain(); lfoAD.gain.value=0.34;
+    lfoA.connect(lfoAD); lfoAD.connect(amA.gain);
+    var sawA=ac.createOscillator(); sawA.type='sawtooth'; sawA.frequency.value=30;
+    var sawAG=ac.createGain(); sawAG.gain.value=0;
+    noise.connect(bpA); bpA.connect(amA); amA.connect(gA);
+    sawA.connect(sawAG); sawAG.connect(gA);
+
+    // ② アーク — 火花を1発ずつ不規則に打つ。周期を持たせないのが要点。
+    var bpB=ac.createBiquadFilter(); bpB.type='bandpass'; bpB.frequency.value=2600; bpB.Q.value=0.9;
+    var sparkG=ac.createGain(); sparkG.gain.value=0.0008;
+    noise.connect(bpB); bpB.connect(sparkG); sparkG.connect(gB);
+
+    // ③ コロナ — 連続した高域のヒス。ゆっくりした揺らぎだけ。
+    var hpC=ac.createBiquadFilter(); hpC.type='highpass'; hpC.frequency.value=2000;
+    var amC=ac.createGain(); amC.gain.value=0.72;
+    var lfoC=ac.createOscillator(); lfoC.type='sine'; lfoC.frequency.value=0.7;
+    var lfoCD=ac.createGain(); lfoCD.gain.value=0.24;
+    lfoC.connect(lfoCD); lfoCD.connect(amC.gain);
+    noise.connect(hpC); hpC.connect(amC); amC.connect(gC);
+
+    // ④ ハム — 低い唸り。変圧器のような重さ。
+    var o1=ac.createOscillator(); o1.type='sine';     o1.frequency.value=48;
+    var o2=ac.createOscillator(); o2.type='sine';     o2.frequency.value=96.7;
+    var o3=ac.createOscillator(); o3.type='triangle'; o3.frequency.value=146;
+    var g1=ac.createGain(); g1.gain.value=0.55;
+    var g2=ac.createGain(); g2.gain.value=0.20;
+    var g3=ac.createGain(); g3.gain.value=0.05;
+    var lpD=ac.createBiquadFilter(); lpD.type='lowpass'; lpD.frequency.value=800;
+    var nzD=ac.createGain(); nzD.gain.value=0.05;
+    o1.connect(g1); o2.connect(g2); o3.connect(g3);
+    g1.connect(gD); g2.connect(gD); g3.connect(gD);
+    noise.connect(lpD); lpD.connect(nzD); nzD.connect(gD);
+
+    try{ noise.start(0); lfoA.start(0); sawA.start(0); lfoC.start(0); o1.start(0); o2.start(0); o3.start(0); }catch(e){}
+
+    A={ctx:ac, master:master, gA:gA,gB:gB,gC:gC,gD:gD,
+       bpA:bpA, lfoA:lfoA, sawA:sawA, sawAG:sawAG,
+       bpB:bpB, sparkG:sparkG,
+       hpC:hpC, lfoC:lfoC,
+       o1:o1,o2:o2,o3:o3,g3:g3};
+    applySound(true);
     return A;
+  }
+
+  function applySound(instant){
+    if(!A) return;
+    var t=A.ctx.currentTime, tc=instant?0.001:0.09;
+    var g=[A.gA,A.gB,A.gC,A.gD];
+    for(var i=0;i<4;i++) g[i].gain.setTargetAtTime(i===sndIdx?1:0,t,tc);
   }
 
   // iOS の解錠。pointerdown だけでは開かないことがあるので touchend / click でも試し、
@@ -206,17 +260,74 @@
 
   // 見た目より下に床を作る。軽く触れただけでも小さく鳴る。
   function audioLevel(s){ return 0.12*Math.min(1,s*3)+0.88*visCurve(s); }
+
+  // アーク用。1発ずつ時刻を決めて打つので、周期が揃わない。
+  var sparkNext=0;
+  function scheduleSparks(a){
+    var ac=A.ctx, t=ac.currentTime, g=A.sparkG.gain;
+    if(sparkNext<t+0.01) sparkNext=t+0.01;
+    var rate=3+a*a*72, horizon=t+0.13, n=0;
+    while(sparkNext<horizon && n++<40){
+      var peak=(0.25+Math.random()*0.75)*(0.30+a*0.70);
+      var dur=0.012+Math.random()*(0.045+a*0.07);
+      g.setValueAtTime(0.0008, sparkNext);
+      g.linearRampToValueAtTime(peak, sparkNext+0.0015);
+      g.exponentialRampToValueAtTime(0.0008, sparkNext+dur);
+      sparkNext += Math.max(0.006, (1/rate)*(0.30+Math.random()*1.4));
+    }
+  }
+
   function audioUpdate(s){
-    if(!A) return;                                   // state は見ない（停止中に書いても害はない）
+    if(!A) return;
     var t=A.ctx.currentTime, a=audioLevel(s);
-    var j=1+(Math.random()-0.5)*0.12;                // 揺らぎがないと電子音になる
-    var rate=(26+a*118)*j;
-    A.lfo.frequency.setTargetAtTime(rate,t,0.03);
-    A.saw.frequency.setTargetAtTime(rate*0.5,t,0.03);
-    A.bp.frequency.setTargetAtTime((900+a*2700)*j,t,0.03);
-    A.bp.Q.setTargetAtTime(1.2+a*5,t,0.05);
-    A.sawG.gain.setTargetAtTime(a*a*0.06,t,0.04);
-    A.master.gain.setTargetAtTime(a*0.55,t,0.03);
+    var j=1+(Math.random()-0.5)*0.12;
+
+    if(sndIdx===0){
+      var rate=(26+a*118)*j;
+      A.lfoA.frequency.setTargetAtTime(rate,t,0.03);
+      A.sawA.frequency.setTargetAtTime(rate*0.5,t,0.03);
+      A.bpA.frequency.setTargetAtTime((900+a*2700)*j,t,0.03);
+      A.bpA.Q.setTargetAtTime(1.2+a*5,t,0.05);
+      A.sawAG.gain.setTargetAtTime(a*a*0.06,t,0.04);
+    } else if(sndIdx===1){
+      A.bpB.frequency.setTargetAtTime((1400+a*3800)*j,t,0.05);
+      A.bpB.Q.setTargetAtTime(0.7+a*1.8,t,0.08);
+      if(a>0.002) scheduleSparks(a);
+    } else if(sndIdx===2){
+      A.hpC.frequency.setTargetAtTime(1400+a*4400,t,0.08);
+      A.lfoC.frequency.setTargetAtTime(0.45+a*1.7,t,0.10);
+    } else {
+      var f=44+a*22;
+      A.o1.frequency.setTargetAtTime(f,t,0.08);
+      A.o2.frequency.setTargetAtTime(f*2.02,t,0.08);
+      A.o3.frequency.setTargetAtTime(f*3.05,t,0.08);
+      A.g3.gain.setTargetAtTime(0.015+a*0.16,t,0.08);
+    }
+    A.master.gain.setTargetAtTime(a*MODE_GAIN[sndIdx],t,0.03);
+  }
+
+  /* ---------- 3タップで音を切り替える ---------- */
+  var sndEl=document.getElementById('sndName'), sndTmr=0;
+  function showSound(){
+    sndEl.textContent='音  '+SOUNDS[sndIdx];
+    sndEl.classList.add('show');
+    clearTimeout(sndTmr);
+    sndTmr=setTimeout(function(){ sndEl.classList.remove('show'); },1500);
+  }
+  var tapAt=0, tapN=0, tapSide=0;
+  function registerTap(x,dur,moved,now){
+    if(dur>320||moved>24){ tapN=0; return; }
+    var side = x>S.W*0.68 ? 1 : (x<S.W*0.32 ? -1 : 0);
+    if(!side){ tapN=0; return; }
+    if(now-tapAt>700 || side!==tapSide){ tapN=0; tapSide=side; }
+    tapAt=now; tapN++;
+    if(tapN>=3){
+      tapN=0;
+      sndIdx=(sndIdx+(side>0?1:3))%4;
+      try{ localStorage.setItem('pt.snd',String(sndIdx)); }catch(e){}
+      applySound(false);
+      showSound();
+    }
   }
 
   /* ---------- 振動（Web PWM） ---------- */
@@ -409,6 +520,7 @@
     e.preventDefault();
     if(cv.setPointerCapture) cv.setPointerCapture(e.pointerId);
     S.active=true; readPointer(e);
+    S.downT=performance.now(); S.downX=e.clientX; S.downY=e.clientY;
     // 一瞬のタップでも取りこぼさないよう、押した時点で立ち上げておく
     var t0=computeTarget();
     if(t0>S.strength) S.strength=t0*0.55;
@@ -420,9 +532,17 @@
   cv.addEventListener('pointermove',function(e){
     if(!S.active) return; e.preventDefault(); readPointer(e);
   });
-  function up(){ if(!S.active) return; S.active=false; }   // 振動と音は減衰に追従して止まる
+  function up(e){                                  // 振動と音は減衰に追従して止まる
+    if(!S.active) return;
+    S.active=false;
+    if(e&&typeof e.clientX==='number'){
+      var now=performance.now();
+      var dx=e.clientX-S.downX, dy=e.clientY-S.downY;
+      registerTap(e.clientX, now-S.downT, Math.sqrt(dx*dx+dy*dy), now);
+    }
+  }
   cv.addEventListener('pointerup',up);
-  cv.addEventListener('pointercancel',up);
+  cv.addEventListener('pointercancel',function(){ S.active=false; tapN=0; });
   document.addEventListener('visibilitychange',function(){
     if(document.hidden){
       S.active=false; S.strength=0; stopVib();
@@ -447,7 +567,8 @@
       'sampleRate   : '+(a?a.sampleRate:'-')+'\n'+
       'master.gain  : '+(a?A.master.gain.value.toFixed(3):'-')+'\n'+
       'strength     : '+S.strength.toFixed(3)+'\n'+
-      'vibrate      : '+(!!navigator.vibrate);
+      'vibrate      : '+(!!navigator.vibrate)+'\n'+
+      'sound        : '+sndIdx+' '+SOUNDS[sndIdx];
   }
 
   /* ---------- 起動 ---------- */
