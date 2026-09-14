@@ -341,25 +341,37 @@
     var period=Math.round(130-u*90);
     return {on:on, off:Math.max(0,period-on)};
   }
-  function vibFire(s){
+  // navigator.vibrate() は呼ぶたびに前のパターンを打ち切って鳴らし直す。
+  // モーターは立ち上がりに10〜20msかかるので、無駄な打ち直しはそのまま弱さになる。
+  // 刻みが変わっていないうちは打ち直さない ＝ 最大付近は本当に鳴りっぱなしになる。
+  var vibKey='', vibAt=0;
+  function vibFire(s,now){
     if(!navigator.vibrate) return;
-    if(s<=0.005){ try{navigator.vibrate(0);}catch(e){} return; }
-    var sp=pulseSpec(s), pat, acc=0;
-    if(sp.off===0){ pat=[260]; }
-    else { pat=[]; while(acc<260&&pat.length<60){ pat.push(sp.on); pat.push(sp.off); acc+=sp.on+sp.off; } }
+    if(s<=0.005){ try{navigator.vibrate(0);}catch(e){} vibKey=''; return; }
+    var sp=pulseSpec(s), key=sp.on+'/'+sp.off;
+    var span=(sp.off===0)?900:600;                 // 1回で何ms分を予約するか
+    if(key===vibKey && now-vibAt < span-140) return;
+    var pat;
+    if(sp.off===0){ pat=[span]; }
+    else {
+      pat=[]; var acc=0;
+      while(acc<span && pat.length<120){ pat.push(sp.on); pat.push(sp.off); acc+=sp.on+sp.off; }
+    }
     try{ navigator.vibrate(pat); }catch(e){}
+    vibKey=key; vibAt=now;
   }
   function startVib(){
     if(vibTimer) return;
-    vibFire(S.strength);
+    vibFire(S.strength,performance.now());
     vibTimer=setInterval(function(){
       // 指を離しても、減衰が終わるまで追従させる
       if(!S.active && S.strength<0.03){ stopVib(); return; }
-      vibFire(S.strength);
-    },170);
+      vibFire(S.strength,performance.now());
+    },90);
   }
   function stopVib(){
     if(vibTimer){ clearInterval(vibTimer); vibTimer=null; }
+    vibKey='';
     try{ if(navigator.vibrate) navigator.vibrate(0); }catch(e){}
   }
 
