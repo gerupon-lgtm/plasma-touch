@@ -161,6 +161,10 @@
   // 4系統を並列に組んでおき、ゲインで切り替える。切り替えでプツッと切れないよう 短くクロスフェードする。
   var A=null, audioUnlocked=false;
   var DBG=/[?&]debug=1/.test(location.search);
+  // ?mediaout=1 で、出力を <audio> 要素経由に切り替える。
+  // Android の画面録画がメディア再生しか拾わない場合の回避策。副作用の可能性があるので既定はオフ。
+  var MEDIAOUT=/[?&]mediaout=1/.test(location.search);
+  var mediaEl=null;
   // 並び順はここだけで決まる。先頭が既定。
   var ORDER=['arc','corona','hum','coil'];
   var NAME={coil:'コイル', arc:'アーク', corona:'コロナ', hum:'ハム'};
@@ -182,7 +186,23 @@
 
     var lp=ac.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=9500;
     var master=ac.createGain(); master.gain.value=0;
-    lp.connect(master); master.connect(ac.destination);
+    lp.connect(master);
+
+    if(MEDIAOUT && ac.createMediaStreamDestination){
+      // 出力を MediaStream にして <audio> から鳴らす。スピーカー直結ではなくなる。
+      var msd=ac.createMediaStreamDestination();
+      master.connect(msd);
+      mediaEl=document.createElement('audio');
+      mediaEl.srcObject=msd.stream;
+      mediaEl.setAttribute('playsinline','');
+      mediaEl.autoplay=true;
+      mediaEl.volume=1;
+      mediaEl.style.cssText='position:fixed;width:1px;height:1px;opacity:0;pointer-events:none';
+      document.body.appendChild(mediaEl);
+      var pp=mediaEl.play(); if(pp&&pp.catch) pp.catch(function(){});
+    } else {
+      master.connect(ac.destination);
+    }
     function bus(){ var g=ac.createGain(); g.gain.value=0; g.connect(lp); return g; }
     var gA=bus(), gB=bus(), gC=bus(), gD=bus();
 
@@ -251,6 +271,7 @@
       var src=ac.createBufferSource();
       src.buffer=b; src.connect(ac.destination); src.start(0);
     }catch(e){}
+    if(mediaEl && mediaEl.paused){ var mp=mediaEl.play(); if(mp&&mp.catch) mp.catch(function(){}); }
     if(ac.state!=='running'){
       var pr=ac.resume();
       if(pr&&pr.then) pr.then(function(){ audioUnlocked=(ac.state==='running'); }).catch(function(){});
@@ -583,7 +604,8 @@
       'master.gain  : '+(a?A.master.gain.value.toFixed(3):'-')+'\n'+
       'strength     : '+S.strength.toFixed(3)+'\n'+
       'vibrate      : '+(!!navigator.vibrate)+'\n'+
-      'sound        : '+sndIdx+' '+NAME[curSnd()];
+      'sound        : '+sndIdx+' '+NAME[curSnd()]+'\n'+
+      'mediaout     : '+MEDIAOUT+(mediaEl?(mediaEl.paused?' (paused)':' (playing)'):'');
   }
 
   /* ---------- 起動 ---------- */
